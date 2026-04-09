@@ -1,43 +1,48 @@
 //! Runtime-checked named tensors — the untyped counterpart to [`crate::typed`].
 //!
 //! Dim names are `String`s carried alongside a [`burn::tensor::Tensor`], and all
-//! shape/dim constraints are checked at run time. The API mirrors [`crate::typed`]
-//! so code can be ported by swapping type-level dim markers for string literals.
+//! shape/dim constraints are checked at run time.
 
 use burn::prelude::*;
 use burn::tensor::Shape;
 use std::collections::HashSet;
-use std::marker::PhantomData;
 
 /// A burn tensor with a `String` name per axis.
 pub struct NamedTensor<B: Backend, const D: usize> {
     pub inner: Tensor<B, D>,
     pub names: [String; D],
-    _b: PhantomData<fn() -> B>,
 }
 
 impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn new(names: [&str; D], inner: Tensor<B, D>) -> Self {
-        Self { inner, names: names.map(String::from), _b: PhantomData }
+        Self {
+            inner,
+            names: names.map(String::from),
+        }
     }
-
     pub fn from_parts(names: [String; D], inner: Tensor<B, D>) -> Self {
-        Self { inner, names, _b: PhantomData }
+        Self { inner, names }
     }
-
-    pub fn into_inner(self) -> Tensor<B, D> { self.inner }
-    pub fn shape(&self) -> Shape { self.inner.shape() }
-    pub fn names(&self) -> &[String; D] { &self.names }
+    pub fn into_inner(self) -> Tensor<B, D> {
+        self.inner
+    }
+    pub fn shape(&self) -> Shape {
+        self.inner.shape()
+    }
+    pub fn names(&self) -> &[String; D] {
+        &self.names
+    }
 }
 
-impl<B: Backend, const D: usize> Clone for NamedTensor<B, D>
-where Tensor<B, D>: Clone {
+impl<B: Backend, const D: usize> Clone for NamedTensor<B, D> {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone(), names: self.names.clone(), _b: PhantomData }
+        Self {
+            inner: self.inner.clone(),
+            names: self.names.clone(),
+        }
     }
 }
-impl<B: Backend, const D: usize> std::fmt::Debug for NamedTensor<B, D>
-where Tensor<B, D>: std::fmt::Debug {
+impl<B: Backend, const D: usize> std::fmt::Debug for NamedTensor<B, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NamedTensor")
             .field("names", &self.names)
@@ -45,253 +50,221 @@ where Tensor<B, D>: std::fmt::Debug {
             .finish()
     }
 }
-impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D>
-where Tensor<B, D>: std::fmt::Display {
+impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?} ", self.names)?;
-        self.inner.fmt(f)
+        write!(f, "{:?} {}", self.names, self.inner)
     }
 }
 
-// Runtime axis utilities
+// ---------- axis helpers ----------
 
-fn find_axis(list: &[String], name: &str) -> usize {
-    list.iter()
+fn axis_of(names: &[String], name: &str) -> usize {
+    names
+        .iter()
         .position(|n| n == name)
-        .unwrap_or_else(|| panic!("named-tensor: dim '{name}' not found in {list:?}"))
+        .unwrap_or_else(|| panic!("named-tensor: dim '{name}' not found in {names:?}"))
 }
 
-fn build_perm(from: &[String], to: &[String]) -> Vec<usize> {
-    to.iter().map(|n| find_axis(from, n)).collect()
+fn perm_of(from: &[String], to: &[String]) -> Vec<usize> {
+    to.iter().map(|n| axis_of(from, n)).collect()
 }
 
-fn is_identity(perm: &[usize]) -> bool {
-    perm.iter().enumerate().all(|(i, &p)| i == p)
-}
-
-fn permute_if_needed<B: Backend, const D: usize>(
-    t: Tensor<B, D>,
-    perm: &[usize],
-) -> Tensor<B, D> {
-    if is_identity(perm) { return t; }
-    let arr: [isize; D] = perm.iter().map(|&x| x as isize)
-        .collect::<Vec<_>>().try_into().unwrap();
+fn permute_by<B: Backend, const D: usize>(t: Tensor<B, D>, perm: &[usize]) -> Tensor<B, D> {
+    if perm.iter().enumerate().all(|(i, &p)| i == p) {
+        return t;
+    }
+    let arr: [isize; D] = std::array::from_fn(|i| perm[i] as isize);
     t.permute(arr)
 }
 
-fn contains_name(list: &[String], name: &str) -> bool {
-    list.iter().any(|n| n == name)
+fn to_array<T, const D: usize>(v: Vec<T>) -> [T; D] {
+    v.try_into().ok().expect("length mismatch")
 }
 
-// Operations
+// ---------- operations ----------
 
 /// Element-wise add with union broadcasting. Inputs may differ in rank.
 ///
-/// Output dim order: shared dims (in `lhs` order), then `lhs`-only, then `rhs`-only —
-/// matching the Harvard NLP NamedTensor convention. `D_OUT` must equal the size of
-/// the union; this is checked at run time.
-pub fn add<B, const DL: usize, const DR: usize, const D_OUT: usize>(
+/// Output order: shared dims (lhs order), then lhs-only, then rhs-only.
+/// `D_OUT` must equal the size of the union.
+pub fn add<B: Backend, const DL: usize, const DR: usize, const D_OUT: usize>(
     lhs: NamedTensor<B, DL>,
     rhs: NamedTensor<B, DR>,
-) -> NamedTensor<B, D_OUT>
-where
-    B: Backend,
-{
-    let lhs_names = lhs.names.to_vec();
-    let rhs_names = rhs.names.to_vec();
+) -> NamedTensor<B, D_OUT> {
+    let (ln, rn) = (lhs.names.to_vec(), rhs.names.to_vec());
+    let in_l = |n: &String| ln.contains(n);
+    let in_r = |n: &String| rn.contains(n);
 
-    let mut out_names: Vec<String> = Vec::new();
-    for n in &lhs_names {
-        if contains_name(&rhs_names, n) { out_names.push(n.clone()); }
-    }
-    for n in &lhs_names {
-        if !contains_name(&rhs_names, n) { out_names.push(n.clone()); }
-    }
-    for n in &rhs_names {
-        if !contains_name(&lhs_names, n) { out_names.push(n.clone()); }
-    }
+    let out: Vec<String> = ln
+        .iter()
+        .filter(|n| in_r(n))
+        .chain(ln.iter().filter(|n| !in_r(n)))
+        .chain(rn.iter().filter(|n| !in_l(n)))
+        .cloned()
+        .collect();
     assert_eq!(
-        out_names.len(), D_OUT,
-        "add: union has {} dims, expected D_OUT={}", out_names.len(), D_OUT,
+        out.len(),
+        D_OUT,
+        "add: union has {} dims, expected D_OUT={D_OUT}",
+        out.len()
     );
 
-    let l = align::<B, DL, D_OUT>(lhs.inner, &lhs_names, &out_names);
-    let r = align::<B, DR, D_OUT>(rhs.inner, &rhs_names, &out_names);
-
-    let names_arr: [String; D_OUT] = out_names.try_into().unwrap();
-    NamedTensor::from_parts(names_arr, l + r)
+    let l = align::<B, DL, D_OUT>(lhs.inner, &ln, &out);
+    let r = align::<B, DR, D_OUT>(rhs.inner, &rn, &out);
+    NamedTensor::from_parts(to_array(out), l + r)
 }
 
-fn align<B: Backend, const D_IN: usize, const D_OUT: usize>(
-    t: Tensor<B, D_IN>,
-    operand_names: &[String],
-    out_names: &[String],
-) -> Tensor<B, D_OUT> {
-    let missing: Vec<isize> = out_names.iter().enumerate()
-        .filter(|(_, n)| !contains_name(operand_names, n))
+fn align<B: Backend, const DI: usize, const DO: usize>(
+    t: Tensor<B, DI>,
+    from: &[String],
+    to: &[String],
+) -> Tensor<B, DO> {
+    let missing: Vec<isize> = to
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| !from.contains(n))
         .map(|(i, _)| i as isize)
         .collect();
+    let expanded: Tensor<B, DO> = t.unsqueeze_dims(&missing);
 
-    let expanded: Tensor<B, D_OUT> = t.unsqueeze_dims(&missing);
-
-    let mut current: Vec<String> = vec![String::new(); D_OUT];
-    let mut src = 0usize;
-    for i in 0..D_OUT {
+    let mut cur = Vec::with_capacity(DO);
+    let mut src = 0;
+    for i in 0..DO {
         if missing.contains(&(i as isize)) {
-            current[i] = out_names[i].clone();
+            cur.push(to[i].clone());
         } else {
-            current[i] = operand_names[src].clone();
+            cur.push(from[src].clone());
             src += 1;
         }
     }
-
-    let perm = build_perm(&current, out_names);
-    permute_if_needed(expanded, &perm)
+    permute_by(expanded, &perm_of(&cur, to))
 }
 
-/// Matrix multiply contracting over dim `contract`. May appear at any axis on either side.
-/// Both tensors must share the same burn rank `D`, and `D == D_OUT` (mirrors the typed API).
-///
-/// Output dim order: batch dims (lhs order), then lhs-only M-dims, then rhs-only N-dims.
-pub fn matmul<B, const D: usize, const D_OUT: usize>(
+/// Matrix multiply contracting over dim `contract`. Both sides share rank `D`,
+/// and `D == D_OUT`. Output order: batch dims (lhs order), then lhs-only, then rhs-only.
+pub fn matmul<B: Backend, const D: usize, const D_OUT: usize>(
     lhs: NamedTensor<B, D>,
     rhs: NamedTensor<B, D>,
     contract: &str,
-) -> NamedTensor<B, D_OUT>
-where
-    B: Backend,
-{
+) -> NamedTensor<B, D_OUT> {
     assert_eq!(D, D_OUT, "matmul: D={D} ≠ D_OUT={D_OUT}");
-
-    let lhs_names = lhs.names.to_vec();
-    let rhs_names = rhs.names.to_vec();
-    let k = contract;
-
-    let k_l = find_axis(&lhs_names, k);
-    let k_r = find_axis(&rhs_names, k);
+    let (ln, rn) = (lhs.names.to_vec(), rhs.names.to_vec());
+    let (kl, kr) = (axis_of(&ln, contract), axis_of(&rn, contract));
     assert_eq!(
-        lhs.inner.shape().dims[k_l], rhs.inner.shape().dims[k_r],
-        "matmul: K='{k}' size mismatch",
+        lhs.inner.shape().dims[kl],
+        rhs.inner.shape().dims[kr],
+        "matmul: K='{contract}' size mismatch",
     );
 
-    let rhs_set: HashSet<&str> = rhs_names.iter().map(|s| s.as_str()).collect();
-    let lhs_set: HashSet<&str> = lhs_names.iter().map(|s| s.as_str()).collect();
-
-    let batch_names: Vec<String> = lhs_names.iter()
-        .filter(|n| n.as_str() != k && rhs_set.contains(n.as_str()))
-        .cloned().collect();
-    let m_names: Vec<String> = lhs_names.iter()
-        .filter(|n| n.as_str() != k && !rhs_set.contains(n.as_str()))
-        .cloned().collect();
-    let n_names: Vec<String> = rhs_names.iter()
-        .filter(|n| n.as_str() != k && !lhs_set.contains(n.as_str()))
-        .cloned().collect();
-
-    let k_owned = k.to_string();
-    let lhs_target: Vec<String> = batch_names.iter()
-        .chain(m_names.iter())
-        .chain(std::iter::once(&k_owned))
-        .cloned().collect();
-    let rhs_target: Vec<String> = batch_names.iter()
-        .chain(std::iter::once(&k_owned))
-        .chain(n_names.iter())
-        .cloned().collect();
-
-    let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
-    let rhs_p = permute_if_needed(rhs.inner, &build_perm(&rhs_names, &rhs_target));
-
-    let raw: Tensor<B, D> = lhs_p.matmul(rhs_p);
-    let raw_names: Vec<String> = batch_names.into_iter()
-        .chain(m_names.into_iter())
-        .chain(n_names.into_iter())
+    let lset: HashSet<&str> = ln.iter().map(String::as_str).collect();
+    let rset: HashSet<&str> = rn.iter().map(String::as_str).collect();
+    let not_k = |n: &&String| n.as_str() != contract;
+    let batch: Vec<String> = ln
+        .iter()
+        .filter(not_k)
+        .filter(|n| rset.contains(n.as_str()))
+        .cloned()
         .collect();
+    let m: Vec<String> = ln
+        .iter()
+        .filter(not_k)
+        .filter(|n| !rset.contains(n.as_str()))
+        .cloned()
+        .collect();
+    let nn: Vec<String> = rn
+        .iter()
+        .filter(not_k)
+        .filter(|n| !lset.contains(n.as_str()))
+        .cloned()
+        .collect();
+
+    let k = contract.to_string();
+    let lhs_tgt: Vec<String> = batch
+        .iter()
+        .chain(m.iter())
+        .chain(std::iter::once(&k))
+        .cloned()
+        .collect();
+    let rhs_tgt: Vec<String> = batch
+        .iter()
+        .chain(std::iter::once(&k))
+        .chain(nn.iter())
+        .cloned()
+        .collect();
+
+    let lp = permute_by(lhs.inner, &perm_of(&ln, &lhs_tgt));
+    let rp = permute_by(rhs.inner, &perm_of(&rn, &rhs_tgt));
+    let raw: Tensor<B, D> = lp.matmul(rp);
+
+    let out: Vec<String> = batch.into_iter().chain(m).chain(nn).collect();
     assert_eq!(
-        raw_names.len(), D_OUT,
-        "matmul: output has {} dims, expected D_OUT={}", raw_names.len(), D_OUT,
+        out.len(),
+        D_OUT,
+        "matmul: output has {} dims, expected D_OUT={D_OUT}",
+        out.len()
     );
 
-    // SAFETY: D == D_OUT (checked above); Tensor<B,D> and Tensor<B,D_OUT> are layout-identical.
-    let result: Tensor<B, D_OUT> = unsafe {
-        std::mem::transmute_copy(&std::mem::ManuallyDrop::new(raw))
-    };
-    let names_arr: [String; D_OUT] = raw_names.try_into().unwrap();
-    NamedTensor::from_parts(names_arr, result)
+    // SAFETY: D == D_OUT (asserted above); Tensor<B,D> and Tensor<B,D_OUT> are layout-identical.
+    let result: Tensor<B, D_OUT> =
+        unsafe { std::mem::transmute_copy(&std::mem::ManuallyDrop::new(raw)) };
+    NamedTensor::from_parts(to_array(out), result)
 }
 
-/// Dot product of two rank-1 tensors sharing the same dim.
-pub fn dot<B>(lhs: NamedTensor<B, 1>, rhs: NamedTensor<B, 1>) -> f32
+/// Dot product of two rank-1 tensors sharing the same dim name.
+pub fn dot<B: Backend>(lhs: NamedTensor<B, 1>, rhs: NamedTensor<B, 1>) -> f32
 where
-    B: Backend,
     B::FloatElem: Into<f32>,
 {
     assert_eq!(
         lhs.names[0], rhs.names[0],
-        "dot: dim name mismatch: '{}' vs '{}'", lhs.names[0], rhs.names[0],
+        "dot: dim name mismatch: '{}' vs '{}'",
+        lhs.names[0], rhs.names[0]
     );
     assert_eq!(
-        lhs.inner.shape().dims[0], rhs.inner.shape().dims[0],
-        "dot: size mismatch",
+        lhs.inner.shape().dims[0],
+        rhs.inner.shape().dims[0],
+        "dot: size mismatch"
     );
     (lhs.inner * rhs.inner).sum().into_scalar().into()
 }
 
-/// Sum-reduce over the named dim `dim`. `D_OUT` must equal `D - 1`.
-pub fn sum<B, const D: usize, const D_OUT: usize>(
+/// Sum-reduce over `dim`. `D_OUT` must equal `D - 1`.
+pub fn sum<B: Backend, const D: usize, const D_OUT: usize>(
     t: NamedTensor<B, D>,
     dim: &str,
-) -> NamedTensor<B, D_OUT>
-where
-    B: Backend,
-{
+) -> NamedTensor<B, D_OUT> {
     assert_eq!(D_OUT + 1, D, "sum: D_OUT must equal D-1");
-    let names = t.names.to_vec();
-    let axis = find_axis(&names, dim);
-
-    let squeezed: Tensor<B, D_OUT> = t.inner.sum_dim(axis).squeeze_dim(axis);
-
-    let mut out_names = names;
-    out_names.remove(axis);
-    let names_arr: [String; D_OUT] = out_names.try_into().unwrap();
-    NamedTensor::from_parts(names_arr, squeezed)
+    let axis = axis_of(&t.names, dim);
+    let reduced: Tensor<B, D_OUT> = t.inner.sum_dim(axis).squeeze_dim(axis);
+    let mut names = t.names.to_vec();
+    names.remove(axis);
+    NamedTensor::from_parts(to_array(names), reduced)
 }
 
-/// Permute (transpose) dims to `new_order` — like xarray's `.transpose()`.
-/// `new_order` must be a permutation of the tensor's current dim names.
-pub fn permute<B, const D: usize>(
+/// Permute dims to `new_order` — like xarray's `.transpose()`.
+pub fn permute<B: Backend, const D: usize>(
     t: NamedTensor<B, D>,
     new_order: [&str; D],
-) -> NamedTensor<B, D>
-where
-    B: Backend,
-{
+) -> NamedTensor<B, D> {
     let from = t.names.to_vec();
     let to: Vec<String> = new_order.iter().map(|s| s.to_string()).collect();
-
-    {
-        let from_set: HashSet<&str> = from.iter().map(|s| s.as_str()).collect();
-        let to_set: HashSet<&str> = to.iter().map(|s| s.as_str()).collect();
-        assert_eq!(
-            from_set, to_set,
-            "permute: new order {:?} is not a permutation of {:?}", to, from,
-        );
-    }
-
-    let perm = build_perm(&from, &to);
-    let inner = permute_if_needed(t.inner, &perm);
-    let names_arr: [String; D] = to.try_into().unwrap();
-    NamedTensor::from_parts(names_arr, inner)
+    let fs: HashSet<&str> = from.iter().map(String::as_str).collect();
+    let ts: HashSet<&str> = to.iter().map(String::as_str).collect();
+    assert_eq!(
+        fs, ts,
+        "permute: new order {to:?} is not a permutation of {from:?}"
+    );
+    let inner = permute_by(t.inner, &perm_of(&from, &to));
+    NamedTensor::from_parts(to_array(to), inner)
 }
 
-/// Rename dim `old` to `new` — zero cost, no data movement. Panics if `old` is absent.
-pub fn rename<B, const D: usize>(
+/// Rename dim `old` to `new` — zero cost. Panics if `old` is absent.
+pub fn rename<B: Backend, const D: usize>(
     mut t: NamedTensor<B, D>,
     old: &str,
     new: &str,
-) -> NamedTensor<B, D>
-where
-    B: Backend,
-{
-    let axis = find_axis(&t.names.as_slice().to_vec(), old);
+) -> NamedTensor<B, D> {
+    let axis = axis_of(&t.names, old);
     t.names[axis] = new.to_string();
     t
 }
