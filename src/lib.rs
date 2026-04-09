@@ -285,6 +285,22 @@ where
     NamedTensor::new(squeezed)
 }
 
+/// Permute (transpose) dims to a new order — like xarray's `.transpose()`.
+/// `Out` must be a permutation of `S` (same dims, different order).
+pub fn permute<B, Out, S, FIdx, BIdx, const D: usize>(
+    t: NamedTensor<B, S, D>,
+) -> NamedTensor<B, Out, D>
+where
+    B:   Backend,
+    S:   Subset<Out, FIdx> + NameList + Rank,
+    Out: Subset<S, BIdx> + NameList + Rank,
+{
+    let from = S::names();
+    let to   = Out::names();
+    let perm = build_perm(&from, &to);
+    NamedTensor::new(permute_if_needed(t.inner, &perm))
+}
+
 /// Rename dim `Old` to `New` — zero cost, purely type-level.
 pub fn rename<B, Old, New, Out, S, Idx, const D: usize>(
     t: NamedTensor<B, S, D>,
