@@ -9,7 +9,7 @@ fn main() {
 
     println!("=== named-tensor untyped demo ===\n");
 
-    // 1. add: same shape
+    // 1. add same shape
     {
         let a: NamedTensor<B, 2> =
             NamedTensor::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
@@ -24,7 +24,7 @@ fn main() {
         );
     }
 
-    // 2. add: rank-2 + rank-1 broadcast
+    // 2. add rank-2 + rank-1 broadcast
     {
         let mat: NamedTensor<B, 2> = NamedTensor::new(
             ["M", "N"],
@@ -39,7 +39,7 @@ fn main() {
         println!("2. add (M,N)+(N) → (M,N)\n   {}\n", out);
     }
 
-    // 3. add: disjoint dims (outer broadcast)
+    // 3. add disjoint dims (outer broadcast)
     {
         let row: NamedTensor<B, 1> =
             NamedTensor::new(["M"], Tensor::from_data([1.0f32, 2.0, 3.0], &dev));
@@ -51,7 +51,7 @@ fn main() {
         println!("3. add (M)+(N) → (M,N)\n   {}\n", out);
     }
 
-    // 4. add: commuted order — lhs is rank-1, rhs is rank-2
+    // 4. add commuted order
     {
         let bias: NamedTensor<B, 1> =
             NamedTensor::new(["N"], Tensor::from_data([1.0f32, 1.0, 1.0, 1.0, 1.0], &dev));
@@ -59,7 +59,6 @@ fn main() {
             ["M", "N"],
             Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
         );
-        // shared dim N comes first, then lhs-only (none), then rhs-only M → (N, M)
         let out: NamedTensor<B, 2> = add(bias, mat);
         println!(
             "4. add (N)+(M,N) → (N,M) shape={:?} mean={:.1}\n",
@@ -169,6 +168,64 @@ fn main() {
         );
     }
 
+    // 8b. matmul mixed-rank: (M,K) × (K,N,Batch) → (M,N,Batch)
+    {
+        let lhs: NamedTensor<B, 2> = NamedTensor::new(
+            ["M", "K"],
+            Tensor::from_data(
+                TensorData::new((1..=6).map(|x| x as f32).collect::<Vec<_>>(), [3usize, 2]),
+                &dev,
+            ),
+        );
+        let rhs: NamedTensor<B, 3> = NamedTensor::new(
+            ["K", "N", "Batch"],
+            Tensor::from_data(
+                TensorData::new(
+                    (1..=40).map(|x| x as f32 * 0.1).collect::<Vec<_>>(),
+                    [2usize, 5, 4],
+                ),
+                &dev,
+            ),
+        );
+        let out: NamedTensor<B, 3> = matmul(lhs, rhs, "K");
+        println!(
+            "8b. matmul mixed-rank (M,K)×(K,N,Batch) → names={:?} shape={:?}\n",
+            out.names(),
+            out.shape().dims
+        );
+    }
+
+    // 8c. matmul double-contract (A,K1,K2)×(K2,K1,B) → (A,B)
+    {
+        let lhs: NamedTensor<B, 3> = NamedTensor::new(
+            ["A", "K1", "K2"],
+            Tensor::from_data(
+                TensorData::new(
+                    (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                    [4usize, 2, 3],
+                ),
+                &dev,
+            ),
+        );
+        let rhs: NamedTensor<B, 3> = NamedTensor::new(
+            ["K2", "K1", "B"],
+            Tensor::from_data(
+                TensorData::new(
+                    (1..=30).map(|x| x as f32 * 0.1).collect::<Vec<_>>(),
+                    [3usize, 2, 5],
+                ),
+                &dev,
+            ),
+        );
+        let out: NamedTensor<B, 2> = matmul(lhs, rhs, ["K1", "K2"]);
+        println!(
+            "8c. matmul double-contract (A,K1,K2)×(K2,K1,B) → names={:?} shape={:?}\n    {}\n",
+            out.names(),
+            out.shape().dims,
+            out
+        );
+    }
+
     // 9. dot product
     {
         let u: NamedTensor<B, 1> = NamedTensor::new(
@@ -209,10 +266,6 @@ fn main() {
         let h: NamedTensor<B, 1> = rename(s, "Features", "Hidden");
         println!("11. sum + rename → (Hidden=8)\n    {}\n", h);
     }
-
-    // 12. runtime error demo (commented out — would panic)
-    // let bad: NamedTensor<B, 1> = sum(NamedTensor::new(["A"], ...), "B");
-    // ^ panics: dim 'B' not found in ["A"]
 
     println!("=== done ===");
 }

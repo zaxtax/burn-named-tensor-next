@@ -11,7 +11,7 @@ fn main() {
 
     println!("=== named-tensor demo ===\n");
 
-    // 1. add: same shape
+    // 1. add same shape
     {
         let a: NamedTensor<B, dims![M, N], 2> =
             NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
@@ -27,7 +27,7 @@ fn main() {
         );
     }
 
-    // 2. add: rank-2 + rank-1 broadcast
+    // 2. add rank-2 + rank-1 broadcast
     {
         let mat: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
             TensorData::new((1..=15).map(|x| x as f32).collect::<Vec<_>>(), [3usize, 5]),
@@ -46,7 +46,7 @@ fn main() {
         );
     }
 
-    // 3. add: disjoint dims (outer broadcast)
+    // 3. add disjoint dims (outer broadcast)
     {
         let row: NamedTensor<B, dims![M], 1> =
             NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0], &dev));
@@ -63,7 +63,7 @@ fn main() {
         );
     }
 
-    // 4. add: commuted order
+    // 4. add commuted order
     {
         let bias: NamedTensor<B, dims![N], 1> =
             NamedTensor::new(Tensor::from_data([1.0f32, 1.0, 1.0, 1.0, 1.0], &dev));
@@ -184,14 +184,62 @@ fn main() {
         );
     }
 
-    // 9. dot product
+    // 8b. matmul mixed-rank (M,K)×(K,N,Batch) → (M,N,Batch)
+    {
+        let lhs: NamedTensor<B, dims![M, K], 2> = NamedTensor::new(Tensor::from_data(
+            TensorData::new((1..=6).map(|x| x as f32).collect::<Vec<_>>(), [3usize, 2]),
+            &dev,
+        ));
+        let rhs: NamedTensor<B, dims![K, N, Batch], 3> = NamedTensor::new(Tensor::from_data(
+            TensorData::new(
+                (1..=40).map(|x| x as f32 * 0.1).collect::<Vec<_>>(),
+                [2usize, 5, 4],
+            ),
+            &dev,
+        ));
+        let (lhs_d, rhs_d) = (lhs.dims_str(), rhs.dims_str());
+        let out: NamedTensor<B, dims![M, N, Batch], 3> = matmul(lhs, rhs, K);
+        println!(
+            "8b. matmul mixed-rank {}×{} → {} shape={:?}\n",
+            lhs_d,
+            rhs_d,
+            out.dims_str(),
+            out.shape().dims
+        );
+    }
+
+    // 9. dot → f32
     {
         let u: NamedTensor<B, dims![Features], 1> =
             NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0], &dev));
         let v: NamedTensor<B, dims![Features], 1> =
             NamedTensor::new(Tensor::from_data([0.25f32, 0.5, 0.75, 1.0], &dev));
         let (u_d, v_d) = (u.dims_str(), v.dims_str());
-        println!("9. dot {}·{} = {:.4}\n", u_d, v_d, dot(u, v));
+        let s: f32 = dot(u, v);
+        println!("9. dot {}·{} = {:.4}", u_d, v_d, s);
+    }
+
+    // 9b. dot broadcast → (Batch,)
+    {
+        let mat: NamedTensor<B, dims![Batch, Features], 2> = NamedTensor::new(Tensor::from_data(
+            TensorData::new(
+                vec![1.0f32, 1.0, 1.0, 1.0, 2.0, 2.0, 2.0, 2.0, 3.0, 3.0, 3.0, 3.0],
+                [3usize, 4],
+            ),
+            &dev,
+        ));
+        let bias: NamedTensor<B, dims![Features], 1> =
+            NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0], &dev));
+        let (mat_d, bias_d) = (mat.dims_str(), bias.dims_str());
+        let out: NamedTensor<B, dims![Batch], 1> = dot(mat, bias);
+        println!(
+            "9b. dot broadcast {}·{} → {} shape={:?}\n    {}\n",
+            mat_d,
+            bias_d,
+            out.dims_str(),
+            out.shape().dims,
+            out
+        );
     }
 
     // 10. permute (transpose)
@@ -213,16 +261,20 @@ fn main() {
         let t: NamedTensor<B, dims![SeqLen, Features], 2> =
             NamedTensor::new(Tensor::ones(Shape::new([4usize, 8]), &dev));
         let t_d = t.dims_str();
-        let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t, 0);
+        let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t);
         let s_d = s.dims_str();
         let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
         println!(
-            "11. sum {} → {} then rename → {}\n    {}\n",
+            "11. sum {} → {} then rename → {}\n    {}",
             t_d,
             s_d,
             h.dims_str(),
             h
         );
+
+        // 11b. sum rank-1 → f32
+        let total: f32 = sum::<B, Hidden, _, _, _, 1, 0>(h);
+        println!("11b. sum (Hidden) → f32 = {:.1}\n", total);
     }
 }
 

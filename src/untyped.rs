@@ -1,13 +1,9 @@
 //! Runtime-checked named tensors — the untyped counterpart to [`crate::typed`].
-//!
-//! Dim names are `String`s carried alongside a [`burn::tensor::Tensor`], and all
-//! shape/dim constraints are checked at run time.
 
 use burn::prelude::*;
 use burn::tensor::Shape;
 use std::collections::HashSet;
 
-/// A burn tensor with a `String` name per axis.
 pub struct NamedTensor<B: Backend, const D: usize> {
     pub inner: Tensor<B, D>,
     pub names: [String; D],
@@ -56,8 +52,6 @@ impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
     }
 }
 
-// ---------- axis helpers ----------
-
 fn axis_of(names: &[String], name: &str) -> usize {
     names
         .iter()
@@ -81,12 +75,7 @@ fn to_array<T, const D: usize>(v: Vec<T>) -> [T; D] {
     v.try_into().ok().expect("length mismatch")
 }
 
-// ---------- operations ----------
-
 /// Element-wise add with union broadcasting. Inputs may differ in rank.
-///
-/// Output order: shared dims (lhs order), then lhs-only, then rhs-only.
-/// `D_OUT` must equal the size of the union.
 pub fn add<B: Backend, const DL: usize, const DR: usize, const D_OUT: usize>(
     lhs: NamedTensor<B, DL>,
     rhs: NamedTensor<B, DR>,
@@ -140,74 +129,126 @@ fn align<B: Backend, const DI: usize, const DO: usize>(
     permute_by(expanded, &perm_of(&cur, to))
 }
 
-/// Matrix multiply contracting over dim `contract`. Both sides share rank `D`,
-/// and `D == D_OUT`. Output order: batch dims (lhs order), then lhs-only, then rhs-only.
-pub fn matmul<B: Backend, const D: usize, const D_OUT: usize>(
-    lhs: NamedTensor<B, D>,
-    rhs: NamedTensor<B, D>,
-    contract: &str,
-) -> NamedTensor<B, D_OUT> {
-    assert_eq!(D, D_OUT, "matmul: D={D} ≠ D_OUT={D_OUT}");
-    let (ln, rn) = (lhs.names.to_vec(), rhs.names.to_vec());
-    let (kl, kr) = (axis_of(&ln, contract), axis_of(&rn, contract));
-    assert_eq!(
-        lhs.inner.shape().dims[kl],
-        rhs.inner.shape().dims[kr],
-        "matmul: K='{contract}' size mismatch",
-    );
+pub trait IntoContract {
+    fn into_contract(self) -> Vec<String>;
+}
+impl IntoContract for &str {
+    fn into_contract(self) -> Vec<String> {
+        vec![self.to_string()]
+    }
+}
+impl IntoContract for &[&str] {
+    fn into_contract(self) -> Vec<String> {
+        self.iter().map(|s| s.to_string()).collect()
+    }
+}
+impl<const N: usize> IntoContract for [&str; N] {
+    fn into_contract(self) -> Vec<String> {
+        self.iter().map(|s| s.to_string()).collect()
+    }
+}
 
-    let lset: HashSet<&str> = ln.iter().map(String::as_str).collect();
-    let rset: HashSet<&str> = rn.iter().map(String::as_str).collect();
-    let not_k = |n: &&String| n.as_str() != contract;
-    let batch: Vec<String> = ln
-        .iter()
-        .filter(not_k)
-        .filter(|n| rset.contains(n.as_str()))
-        .cloned()
-        .collect();
+/// Tensor contraction over one or more named dims. Ranks may differ.
+pub fn matmul<
+    B: Backend,
+    C: IntoContract,
+    const DL: usize,
+    const DR: usize,
+    const D_OUT: usize,
+>(
+    lhs: NamedTensor<B, DL>,
+    rhs: NamedTensor<B, DR>,
+    contract: C,
+) -> NamedTensor<B, D_OUT> {
+    let ks = contract.into_contract();
+    let ln: Vec<String> = lhs.names.to_vec();
+    let rn: Vec<String> = rhs.names.to_vec();
+
+    for k in &ks {
+        let kl = axis_of(&ln, k);
+        let kr = axis_of(&rn, k);
+        assert_eq!(
+            lhs.inner.shape().dims[kl],
+            rhs.inner.shape().dims[kr],
+            "matmul: K='{k}' size mismatch",
+        );
+    }
+
+    let is_k = |n: &str| ks.iter().any(|k| k == n);
+    let in_r = |n: &str| rn.iter().any(|x| x == n);
+    let in_l = |n: &str| ln.iter().any(|x| x == n);
+
+    let batch: Vec<String> = ln.iter().filter(|n| !is_k(n) && in_r(n)).cloned().collect();
     let m: Vec<String> = ln
         .iter()
-        .filter(not_k)
-        .filter(|n| !rset.contains(n.as_str()))
+        .filter(|n| !is_k(n) && !in_r(n))
         .cloned()
         .collect();
     let nn: Vec<String> = rn
         .iter()
-        .filter(not_k)
-        .filter(|n| !lset.contains(n.as_str()))
+        .filter(|n| !is_k(n) && !in_l(n))
         .cloned()
         .collect();
 
-    let k = contract.to_string();
     let lhs_tgt: Vec<String> = batch
         .iter()
         .chain(m.iter())
-        .chain(std::iter::once(&k))
+        .chain(ks.iter())
         .cloned()
         .collect();
     let rhs_tgt: Vec<String> = batch
         .iter()
-        .chain(std::iter::once(&k))
+        .chain(ks.iter())
         .chain(nn.iter())
         .cloned()
         .collect();
 
     let lp = permute_by(lhs.inner, &perm_of(&ln, &lhs_tgt));
     let rp = permute_by(rhs.inner, &perm_of(&rn, &rhs_tgt));
-    let raw: Tensor<B, D> = lp.matmul(rp);
 
-    let out: Vec<String> = batch.into_iter().chain(m).chain(nn).collect();
-    assert_eq!(
-        out.len(),
-        D_OUT,
-        "matmul: output has {} dims, expected D_OUT={D_OUT}",
-        out.len()
+    let lp_shape = lp.shape().dims;
+    let rp_shape = rp.shape().dims;
+    let batch_sizes: Vec<usize> = lp_shape[..batch.len()].to_vec();
+    let m_sizes: Vec<usize> = lp_shape[batch.len()..batch.len() + m.len()].to_vec();
+    let k_sizes: Vec<usize> = lp_shape[batch.len() + m.len()..].to_vec();
+    let n_sizes: Vec<usize> = rp_shape[batch.len() + ks.len()..].to_vec();
+
+    let prod = |xs: &[usize]| xs.iter().product::<usize>();
+    let (batch_prod, m_prod, k_prod, n_prod) = (
+        prod(&batch_sizes),
+        prod(&m_sizes),
+        prod(&k_sizes),
+        prod(&n_sizes),
     );
 
-    // SAFETY: D == D_OUT (asserted above); Tensor<B,D> and Tensor<B,D_OUT> are layout-identical.
-    let result: Tensor<B, D_OUT> =
-        unsafe { std::mem::transmute_copy(&std::mem::ManuallyDrop::new(raw)) };
-    NamedTensor::from_parts(to_array(out), result)
+    let lhs3: Tensor<B, 3> = lp.reshape([batch_prod, m_prod, k_prod]);
+    let rhs3: Tensor<B, 3> = rp.reshape([batch_prod, k_prod, n_prod]);
+    let raw3: Tensor<B, 3> = lhs3.matmul(rhs3);
+
+    let out_names: Vec<String> = batch
+        .iter()
+        .chain(m.iter())
+        .chain(nn.iter())
+        .cloned()
+        .collect();
+    assert_eq!(
+        out_names.len(),
+        D_OUT,
+        "matmul: output has {} dims, expected D_OUT={D_OUT}",
+        out_names.len()
+    );
+    let out_shape: [usize; D_OUT] = std::array::from_fn(|i| {
+        if i < batch.len() {
+            batch_sizes[i]
+        } else if i < batch.len() + m.len() {
+            m_sizes[i - batch.len()]
+        } else {
+            n_sizes[i - batch.len() - m.len()]
+        }
+    });
+    let result: Tensor<B, D_OUT> = raw3.reshape(out_shape);
+
+    NamedTensor::from_parts(to_array(out_names), result)
 }
 
 /// Dot product of two rank-1 tensors sharing the same dim name.
@@ -228,7 +269,7 @@ where
     (lhs.inner * rhs.inner).sum().into_scalar().into()
 }
 
-/// Sum-reduce over `dim`. `D_OUT` must equal `D - 1`.
+/// Sum-reduce over `dim`.
 pub fn sum<B: Backend, const D: usize, const D_OUT: usize>(
     t: NamedTensor<B, D>,
     dim: &str,
@@ -241,7 +282,7 @@ pub fn sum<B: Backend, const D: usize, const D_OUT: usize>(
     NamedTensor::from_parts(to_array(names), reduced)
 }
 
-/// Permute dims to `new_order` — like xarray's `.transpose()`.
+/// Permute dims to `new_order`.
 pub fn permute<B: Backend, const D: usize>(
     t: NamedTensor<B, D>,
     new_order: [&str; D],
@@ -258,7 +299,7 @@ pub fn permute<B: Backend, const D: usize>(
     NamedTensor::from_parts(to_array(to), inner)
 }
 
-/// Rename dim `old` to `new` — zero cost. Panics if `old` is absent.
+/// Rename dim `old` to `new`.
 pub fn rename<B: Backend, const D: usize>(
     mut t: NamedTensor<B, D>,
     old: &str,
