@@ -1,4 +1,4 @@
-use named_tensor::{dim, dims, NamedTensor, add, matmul, dot, sum_dim, rename, permute};
+use named_tensor::{dim, dims, NamedTensor, add, matmul, dot, sum, rename, permute};
 use burn::backend::NdArray;
 use burn::tensor::{Tensor, TensorData, Shape};
 
@@ -114,12 +114,12 @@ fn main() {
         println!("    → (N,Batch,M) shape={:?}\n", t2.shape().dims);
     }
 
-    // 11. sum_dim + rename
+    // 11. sum + rename
     {
         let t: NamedTensor<B, dims![SeqLen, Features], 2> = NamedTensor::new(
             Tensor::ones(Shape::new([4usize, 8]), &dev));
-        let s: NamedTensor<B, dims![Features], 1> = sum_dim::<B, SeqLen, _, _, _, 2, 1>(t, 0);
+        let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t, 0);
         let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
-        println!("11. sum_dim + rename → (Hidden=8)\n    {}\n", h);
+        println!("11. sum + rename → (Hidden=8)\n    {}\n", h);
     }
 }

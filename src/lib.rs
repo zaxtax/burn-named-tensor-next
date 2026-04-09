@@ -272,7 +272,7 @@ where
 }
 
 /// Sum-reduce over named dim `C`. `dim_index` is the burn axis (0-based).
-pub fn sum_dim<B, C, Out, S, Idx, const D: usize, const D_OUT: usize>(
+pub fn sum<B, C, Out, S, Idx, const D: usize, const D_OUT: usize>(
     t: NamedTensor<B, S, D>,
     dim_index: usize,
 ) -> NamedTensor<B, Out, D_OUT>
