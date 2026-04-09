@@ -176,14 +176,16 @@ fn permute_if_needed<B: Backend, const D: usize>(t: Tensor<B, D>, perm: &[usize]
 
 pub struct NamedTensor<B: Backend, S, const D: usize> {
     pub inner: Tensor<B, D>,
+    pub names: Vec<&'static str>,
     _s: PhantomData<fn() -> S>,
 }
 
-impl<B: Backend, S: Rank, const D: usize> NamedTensor<B, S, D> {
+impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     pub fn new(t: Tensor<B, D>) -> Self {
         debug_assert_eq!(D, S::RANK);
         Self {
             inner: t,
+            names: S::names(),
             _s: PhantomData,
         }
     }
@@ -192,6 +194,12 @@ impl<B: Backend, S: Rank, const D: usize> NamedTensor<B, S, D> {
     }
     pub fn shape(&self) -> burn::tensor::Shape {
         self.inner.shape()
+    }
+    pub fn dim_names(&self) -> &[&'static str] {
+        &self.names
+    }
+    pub fn dims_str(&self) -> String {
+        format!("({})", self.names.join(","))
     }
 }
 
@@ -202,6 +210,7 @@ where
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
+            names: self.names.clone(),
             _s: PhantomData,
         }
     }
@@ -389,7 +398,7 @@ pub fn sum<B, C, Out, S, Idx, const D: usize, const D_OUT: usize>(
 where
     B: Backend,
     S: Contains<C, Idx> + Remove<C, Idx, Output = Out>,
-    Out: Rank,
+    Out: NameList + Rank,
 {
     let squeezed: Tensor<B, D_OUT> = t.inner.sum_dim(dim_index).squeeze();
     NamedTensor::new(squeezed)
@@ -418,7 +427,7 @@ pub fn rename<B, Old, New, Out, S, Idx, const D: usize>(
 where
     B: Backend,
     S: Contains<Old, Idx> + ReplaceFirst<Old, New, Idx, Output = Out>,
-    Out: Rank,
+    Out: NameList + Rank,
 {
     NamedTensor::new(t.inner)
 }

@@ -17,9 +17,12 @@ fn main() {
             NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
         let b: NamedTensor<B, dims![M, N], 2> =
             NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0);
+        let (a_d, b_d) = (a.dims_str(), b.dims_str());
         let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
         println!(
-            "1. add (M,N)+(M,N) → mean={:.1}\n",
+            "1. add {}+{} → mean={:.1}\n",
+            a_d,
+            b_d,
             Into::<f32>::into(c.inner.mean().into_scalar())
         );
     }
@@ -32,8 +35,15 @@ fn main() {
         ));
         let bias: NamedTensor<B, dims![N], 1> =
             NamedTensor::new(Tensor::from_data([0.1f32, 0.2, 0.3, 0.4, 0.5], &dev));
+        let (mat_d, bias_d) = (mat.dims_str(), bias.dims_str());
         let out: NamedTensor<B, dims![M, N], 2> = add(mat, bias);
-        println!("2. add (M,N)+(N) → (M,N)\n   {}\n", out);
+        println!(
+            "2. add {}+{} → {}\n   {}\n",
+            mat_d,
+            bias_d,
+            out.dims_str(),
+            out
+        );
     }
 
     // 3. add: disjoint dims (outer broadcast)
@@ -42,8 +52,15 @@ fn main() {
             NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0], &dev));
         let col: NamedTensor<B, dims![N], 1> =
             NamedTensor::new(Tensor::from_data([10.0f32, 20.0, 30.0, 40.0, 50.0], &dev));
+        let (row_d, col_d) = (row.dims_str(), col.dims_str());
         let out: NamedTensor<B, dims![M, N], 2> = add(row, col);
-        println!("3. add (M)+(N) → (M,N)\n   {}\n", out);
+        println!(
+            "3. add {}+{} → {}\n   {}\n",
+            row_d,
+            col_d,
+            out.dims_str(),
+            out
+        );
     }
 
     // 4. add: commuted order
@@ -52,9 +69,13 @@ fn main() {
             NamedTensor::new(Tensor::from_data([1.0f32, 1.0, 1.0, 1.0, 1.0], &dev));
         let mat: NamedTensor<B, dims![M, N], 2> =
             NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0);
+        let (bias_d, mat_d) = (bias.dims_str(), mat.dims_str());
         let out: NamedTensor<B, dims![N, M], 2> = add(bias, mat);
         println!(
-            "4. add (N)+(M,N) → (N,M) shape={:?} mean={:.1}\n",
+            "4. add {}+{} → {} shape={:?} mean={:.1}\n",
+            bias_d,
+            mat_d,
+            out.dims_str(),
             out.shape().dims,
             Into::<f32>::into(out.inner.mean().into_scalar())
         );
@@ -74,8 +95,15 @@ fn main() {
             TensorData::new(rhs_data, [4usize, 5]),
             &dev,
         ));
+        let (lhs_d, rhs_d) = (lhs.dims_str(), rhs.dims_str());
         let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
-        println!("5. matmul (M,K)×(K,N) → (M,N)\n   {}\n", c);
+        println!(
+            "5. matmul {}×{} → {}\n   {}\n",
+            lhs_d,
+            rhs_d,
+            c.dims_str(),
+            c
+        );
     }
 
     // 6. matmul 2-D with K at non-standard positions
@@ -91,8 +119,15 @@ fn main() {
             ),
             &dev,
         ));
+        let (lhs_d, rhs_d) = (lhs.dims_str(), rhs.dims_str());
         let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
-        println!("6. matmul (K,M)×(N,K) → (M,N)\n   {}\n", c);
+        println!(
+            "6. matmul {}×{} → {}\n   {}\n",
+            lhs_d,
+            rhs_d,
+            c.dims_str(),
+            c
+        );
     }
 
     // 7. matmul 3-D batched
@@ -111,8 +146,15 @@ fn main() {
             ),
             &dev,
         ));
+        let (lhs_d, rhs_d) = (lhs.dims_str(), rhs.dims_str());
         let out: NamedTensor<B, dims![Batch, M, N], 3> = matmul(lhs, rhs, K);
-        println!("7. matmul batched → shape={:?}\n", out.shape().dims);
+        println!(
+            "7. matmul batched {}×{} → {} shape={:?}\n",
+            lhs_d,
+            rhs_d,
+            out.dims_str(),
+            out.shape().dims
+        );
     }
 
     // 8. matmul 3-D with K in middle
@@ -131,8 +173,15 @@ fn main() {
             ),
             &dev,
         ));
+        let (lhs_d, rhs_d) = (lhs.dims_str(), rhs.dims_str());
         let out: NamedTensor<B, dims![M, Batch, N], 3> = matmul(lhs, rhs, K);
-        println!("8. matmul K-middle → shape={:?}\n", out.shape().dims);
+        println!(
+            "8. matmul K-middle {}×{} → {} shape={:?}\n",
+            lhs_d,
+            rhs_d,
+            out.dims_str(),
+            out.shape().dims
+        );
     }
 
     // 9. dot product
@@ -141,7 +190,8 @@ fn main() {
             NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0], &dev));
         let v: NamedTensor<B, dims![Features], 1> =
             NamedTensor::new(Tensor::from_data([0.25f32, 0.5, 0.75, 1.0], &dev));
-        println!("9. dot = {:.4}\n", dot(u, v));
+        let (u_d, v_d) = (u.dims_str(), v.dims_str());
+        println!("9. dot {}·{} = {:.4}\n", u_d, v_d, dot(u, v));
     }
 
     // 10. permute (transpose)
@@ -153,18 +203,26 @@ fn main() {
             ),
             &dev,
         ));
-        println!("10. permute (Batch,M,N) shape={:?}", t.shape().dims);
+        println!("10. permute {} shape={:?}", t.dims_str(), t.shape().dims);
         let t2: NamedTensor<B, dims![N, Batch, M], 3> = permute(t);
-        println!("    → (N,Batch,M) shape={:?}\n", t2.shape().dims);
+        println!("    → {} shape={:?}\n", t2.dims_str(), t2.shape().dims);
     }
 
     // 11. sum + rename
     {
         let t: NamedTensor<B, dims![SeqLen, Features], 2> =
             NamedTensor::new(Tensor::ones(Shape::new([4usize, 8]), &dev));
+        let t_d = t.dims_str();
         let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t, 0);
+        let s_d = s.dims_str();
         let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
-        println!("11. sum + rename → (Hidden=8)\n    {}\n", h);
+        println!(
+            "11. sum {} → {} then rename → {}\n    {}\n",
+            t_d,
+            s_d,
+            h.dims_str(),
+            h
+        );
     }
 }
 
