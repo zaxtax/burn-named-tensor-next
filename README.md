@@ -169,11 +169,21 @@ let s = sum_dim::<B, K, _, _, _, 2, 1>(t, 0);
 | `sum_dim(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
 
-## Running the demo
+## Running the demos
+
+Typed API — dim names are marker types, all checks at compile time:
 
 ```sh
-cargo run --bin demo
+cargo run --bin typed_demo
 ```
+
+Untyped API — the same operations with `&str` dim names, checked at run time. Exposed under `named_tensor::untyped`:
+
+```sh
+cargo run --bin untyped_demo
+```
+
+The untyped module mirrors the typed surface (`NamedTensor`, `add`, `matmul`, `dot`, `sum`, `permute`, `rename`) but swaps type-level dim markers for string literals — useful when dim names are only known at run time, or as a gentler on-ramp before reaching for the type-level version.
 
 ## How this differs from prior work
 

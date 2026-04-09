@@ -123,3 +123,87 @@ fn main() {
         println!("11. sum + rename → (Hidden=8)\n    {}\n", h);
     }
 }
+
+// ─── Compile-time error showcase ────────────────────────────────────────────
+//
+// Every example below is rejected by rustc. Uncomment any one and `cargo check`
+// to see the exact trait-bound failure. Each violation points at the precise
+// type-level invariant the crate encodes — not at a line inside the operation.
+//
+// NOTE: these are just demonstrations — runtime panics (shape mismatches,
+// `D` vs `Rank` disagreement, etc.) are *not* included; only errors caught by
+// the type system before the program runs.
+//
+// dim!(P, Time);  // add these dims to the `dim!` line above if you uncomment
+//                 // the examples below that reference them
+//
+// ── E1: add — output omits a dim that's present in an input ────────────────
+// `Out: IsUnionOf<SL, SR, _>` fails: Subset<dims![M,P] → dims![M,N]> has no
+// index for P.
+//
+// let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let b: NamedTensor<B, dims![M, P], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 7]), &dev));
+// let _c: NamedTensor<B, dims![M, N], 2> = add(a, b);
+//
+// ── E2: matmul — contraction dim isn't in lhs ──────────────────────────────
+// `SL: Contains<K, _>` fails for SL = dims![M, N].
+//
+// let lhs: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let rhs: NamedTensor<B, dims![K, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([4usize, 5]), &dev));
+// let _c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
+//
+// ── E3: matmul — contraction dim isn't in rhs ──────────────────────────────
+// Symmetric: `SR: Contains<K, _>` fails for SR = dims![M, N].
+//
+// let lhs: NamedTensor<B, dims![M, K], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 4]), &dev));
+// let rhs: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let _c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
+//
+// ── E4: dot — operands name different dims ────────────────────────────────
+// `dot(lhs, rhs)` requires both to be `NamedTensor<_, S, 1>` for the *same* S,
+// so unifying dims![Features] with dims![Time] fails with E0308.
+//
+// let u: NamedTensor<B, dims![Features], 1> = NamedTensor::new(Tensor::ones(Shape::new([4usize]), &dev));
+// let v: NamedTensor<B, dims![Time],     1> = NamedTensor::new(Tensor::ones(Shape::new([4usize]), &dev));
+// let _ = dot(u, v);
+//
+// ── E5: dot — wrong rank ──────────────────────────────────────────────────
+// `dot` takes `NamedTensor<_, _, 1>`; passing a rank-2 tensor fails with E0308.
+//
+// let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let b: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let _ = dot(a, b);
+//
+// ── E6: sum — dim isn't in the tensor ─────────────────────────────────────
+// `S: Contains<C, _>` fails: K ∉ dims![M, N].
+//
+// let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let _s: NamedTensor<B, dims![M], 1> = sum::<B, K, _, _, _, 2, 1>(t, 0);
+//
+// ── E7: rename — old dim isn't in the tensor ──────────────────────────────
+// `S: Contains<Old, _>` + `ReplaceFirst<Old, New, _>` both fail.
+//
+// let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let _r: NamedTensor<B, dims![M, Hidden], 2> = rename::<B, K, Hidden, _, _, _, 2>(t);
+//
+// ── E8: permute — output has a dim that isn't in the input ────────────────
+// `Out: Subset<S, _>` fails: K ∉ dims![Batch, M, N].
+//
+// let t: NamedTensor<B, dims![Batch, M, N], 3> = NamedTensor::new(
+//     Tensor::ones(Shape::new([2usize, 3, 5]), &dev));
+// let _p: NamedTensor<B, dims![N, Batch, K], 3> = permute(t);
+//
+// ── E9: permute — output drops a dim ──────────────────────────────────────
+// `permute<B, Out, S, _, _, D>` fixes the output rank to the same `D` as the
+// input; annotating a rank-2 output for a rank-3 input fails with E0308.
+//
+// let t: NamedTensor<B, dims![Batch, M, N], 3> = NamedTensor::new(
+//     Tensor::ones(Shape::new([2usize, 3, 5]), &dev));
+// let _p: NamedTensor<B, dims![Batch, M], 2> = permute(t);
+//
+// ── E10: rename — user annotates the wrong output list ────────────────────
+// `ReplaceFirst<M, K>` on dims![M, N] produces dims![K, N]; annotating
+// dims![N, K] disagrees and rustc rejects the `Out = …` projection.
+//
+// let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+// let _r: NamedTensor<B, dims![N, K], 2> = rename::<B, M, K, _, _, _, 2>(t);
