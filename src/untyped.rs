@@ -3,7 +3,7 @@
 use burn::prelude::*;
 use burn::tensor::Shape;
 use std::collections::HashSet;
-use std::ops::Add;
+use std::ops::{Add, Sub, Mul, Div};
 
 pub struct NamedTensor<B: Backend, const D: usize> {
     pub inner: Tensor<B, D>,
@@ -29,6 +29,51 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn names(&self) -> &[String; D] {
         &self.names
     }
+
+    /// Mean-reduce over the given dims.
+    pub fn mean<C: IntoContract, const D_OUT: usize>(self, dims: C) -> NamedTensor<B, D_OUT> {
+        let contract = dims.into_contract();
+        assert_eq!(
+            D_OUT + contract.len(),
+            D,
+            "mean: D_OUT ({D_OUT}) must equal D ({D}) minus contracted dims ({})",
+            contract.len()
+        );
+        let mut inner = self.inner;
+        for d in &contract {
+            let axis = axis_of(&self.names, d);
+            inner = inner.mean_dim(axis);
+        }
+        let out_names: Vec<String> = self
+            .names
+            .iter()
+            .filter(|n| !contract.contains(n))
+            .cloned()
+            .collect();
+        let shape = inner.shape().dims;
+        let kept: Vec<usize> = self
+            .names
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| !contract.contains(n))
+            .map(|(i, _)| shape[i])
+            .collect();
+        let out_shape: [usize; D_OUT] = std::array::from_fn(|i| kept[i]);
+        let prod: usize = out_shape.iter().product::<usize>().max(1);
+        let flat: Tensor<B, 1> = inner.reshape([prod]);
+        let result: Tensor<B, D_OUT> = flat.reshape(out_shape);
+        NamedTensor::from_parts(to_array(out_names), result)
+    }
+
+    /// Convert to a typed [`crate::typed::NamedTensor`], permuting axes to match
+    /// the target dim order. Panics if the name sets don't match.
+    pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(self) -> crate::typed::NamedTensor<B, S, D> {
+        let target = S::names();
+        let from: Vec<String> = self.names.to_vec();
+        let to: Vec<String> = target.iter().map(|s| s.to_string()).collect();
+        let inner = permute_by(self.inner, &perm_of(&from, &to));
+        crate::typed::NamedTensor::new(inner)
+    }
 }
 
 impl<B: Backend, const D: usize> Clone for NamedTensor<B, D> {
@@ -53,13 +98,28 @@ impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
     }
 }
 
-impl<B: Backend, const D: usize> Add for NamedTensor<B, D> {
-    type Output = NamedTensor<B, D>;
+// Operators use lhs as the output type: all rhs dims must be present in lhs.
+// For true union broadcasting (where the output has dims from both sides),
+// use the free functions `add`, `sub`, `mul`, `div` with an explicit output type.
+macro_rules! impl_op {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<B: Backend, const DL: usize, const DR: usize> $trait<NamedTensor<B, DR>>
+            for NamedTensor<B, DL>
+        {
+            type Output = NamedTensor<B, DL>;
 
-    fn add(self, rhs: NamedTensor<B, D>) -> Self::Output {
-        NamedTensor::from_parts(self.names, self.inner + rhs.inner)
-    }
+            fn $method(self, rhs: NamedTensor<B, DR>) -> Self::Output {
+                let r = align::<B, DR, DL>(rhs.inner, &rhs.names, &self.names);
+                NamedTensor::from_parts(self.names, self.inner $op r)
+            }
+        }
+    };
 }
+
+impl_op!(Add, add, +);
+impl_op!(Sub, sub, -);
+impl_op!(Mul, mul, *);
+impl_op!(Div, div, /);
 
 fn axis_of(names: &[String], name: &str) -> usize {
     names
@@ -84,12 +144,7 @@ fn to_array<T, const D: usize>(v: Vec<T>) -> [T; D] {
     v.try_into().ok().expect("length mismatch")
 }
 
-/// Element-wise add with union broadcasting. Inputs may differ in rank.
-pub fn add<B: Backend, const DL: usize, const DR: usize, const D_OUT: usize>(
-    lhs: NamedTensor<B, DL>,
-    rhs: NamedTensor<B, DR>,
-) -> NamedTensor<B, D_OUT> {
-    let (ln, rn) = (lhs.names.to_vec(), rhs.names.to_vec());
+fn union_names<const D_OUT: usize>(ln: &[String], rn: &[String]) -> Vec<String> {
     let in_l = |n: &String| ln.contains(n);
     let in_r = |n: &String| rn.contains(n);
 
@@ -103,14 +158,31 @@ pub fn add<B: Backend, const DL: usize, const DR: usize, const D_OUT: usize>(
     assert_eq!(
         out.len(),
         D_OUT,
-        "add: union has {} dims, expected D_OUT={D_OUT}",
+        "binary op: union has {} dims, expected D_OUT={D_OUT}",
         out.len()
     );
-
-    let l = align::<B, DL, D_OUT>(lhs.inner, &ln, &out);
-    let r = align::<B, DR, D_OUT>(rhs.inner, &rn, &out);
-    NamedTensor::from_parts(to_array(out), l + r)
+    out
 }
+
+macro_rules! def_binop {
+    ($name:ident, $verb:expr, $op:tt) => {
+        #[doc = concat!("Element-wise ", $verb, " with union broadcasting. Inputs may differ in rank.")]
+        pub fn $name<B: Backend, const DL: usize, const DR: usize, const D_OUT: usize>(
+            lhs: NamedTensor<B, DL>,
+            rhs: NamedTensor<B, DR>,
+        ) -> NamedTensor<B, D_OUT> {
+            let out = union_names::<D_OUT>(&lhs.names, &rhs.names);
+            let l = align::<B, DL, D_OUT>(lhs.inner, &lhs.names, &out);
+            let r = align::<B, DR, D_OUT>(rhs.inner, &rhs.names, &out);
+            NamedTensor::from_parts(to_array(out), l $op r)
+        }
+    };
+}
+
+def_binop!(add, "add", +);
+def_binop!(sub, "subtract", -);
+def_binop!(mul, "multiply", *);
+def_binop!(div, "divide", /);
 
 fn align<B: Backend, const DI: usize, const DO: usize>(
     t: Tensor<B, DI>,
@@ -127,9 +199,9 @@ fn align<B: Backend, const DI: usize, const DO: usize>(
 
     let mut cur = Vec::with_capacity(DO);
     let mut src = 0;
-    for i in 0..DO {
+    for (i, to_name) in to.iter().enumerate().take(DO) {
         if missing.contains(&(i as isize)) {
-            cur.push(to[i].clone());
+            cur.push(to_name.clone());
         } else {
             cur.push(from[src].clone());
             src += 1;
@@ -290,6 +362,7 @@ pub fn sum<B: Backend, const D: usize, const D_OUT: usize>(
     names.remove(axis);
     NamedTensor::from_parts(to_array(names), reduced)
 }
+
 
 /// Permute dims to `new_order`.
 pub fn permute<B: Backend, const D: usize>(

@@ -1,6 +1,6 @@
 use burn::backend::NdArray;
 use burn::tensor::{Shape, Tensor, TensorData};
-use named_tensor::untyped::{self, NamedTensor};
+use named_tensor::{self as untyped, NamedTensor};
 
 type B = NdArray<f32>;
 
@@ -22,7 +22,7 @@ fn add_same_shape() {
     let c: NamedTensor<B, 2> = untyped::add(a, b);
     assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(c.shape().dims, [3, 5]);
-    let mean: f32 = c.inner.mean().into_scalar().into();
+    let mean: f32 = c.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
 
@@ -40,7 +40,7 @@ fn add_with_plus_operator() {
     let c = a + b;
     assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(c.shape().dims, [3, 5]);
-    let mean: f32 = c.inner.mean().into_scalar().into();
+    let mean: f32 = c.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
 
@@ -93,7 +93,7 @@ fn add_commuted_order() {
     let out: NamedTensor<B, 2> = untyped::add(bias, mat);
     assert_eq!(out.names(), &["N".to_string(), "M".to_string()]);
     assert_eq!(out.shape().dims, [5, 3]);
-    let mean: f32 = out.inner.mean().into_scalar().into();
+    let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
 
@@ -304,4 +304,289 @@ fn sum_and_rename() {
     assert_eq!(s.shape().dims, [8]);
     let h: NamedTensor<B, 1> = untyped::rename(s, "Features", "Hidden");
     assert_eq!(h.names(), &["Hidden".to_string()]);
+}
+
+#[test]
+fn add_operator_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev),
+    );
+    let bias = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
+    );
+    let out = mat + bias;
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().dims, [3, 5]);
+}
+
+// ── sub ──
+
+#[test]
+fn sub_same_shape() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 5.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c: NamedTensor<B, 2> = untyped::sub(a, b);
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
+}
+
+#[test]
+fn sub_with_minus_operator() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 5.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c = a - b;
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
+}
+
+#[test]
+fn sub_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
+    );
+    let bias = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
+    );
+    let out: NamedTensor<B, 2> = untyped::sub(mat, bias);
+    assert_eq!(out.shape().dims, [5, 3]);
+}
+
+#[test]
+fn sub_operator_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
+    );
+    let bias = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
+    );
+    let out = mat - bias;
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().dims, [3, 5]);
+}
+
+// ── mul ──
+
+#[test]
+fn mul_same_shape() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 3.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c: NamedTensor<B, 2> = untyped::mul(a, b);
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 6.0).abs() < 1e-4, "expected mean 6.0, got {mean}");
+}
+
+#[test]
+fn mul_with_star_operator() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 3.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c = a * b;
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 6.0).abs() < 1e-4, "expected mean 6.0, got {mean}");
+}
+
+#[test]
+fn mul_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 4.0,
+    );
+    let scale = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
+    );
+    let out: NamedTensor<B, 2> = untyped::mul(mat, scale);
+    let mean: f32 = out.inner.mean().into_scalar();
+    assert!((mean - 8.0).abs() < 1e-4, "expected mean 8.0, got {mean}");
+}
+
+#[test]
+fn mul_operator_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 4.0,
+    );
+    let scale = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
+    );
+    let out = mat * scale;
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().dims, [3, 5]);
+    let mean: f32 = out.inner.mean().into_scalar();
+    assert!((mean - 8.0).abs() < 1e-4, "expected mean 8.0, got {mean}");
+}
+
+// ── div ──
+
+#[test]
+fn div_same_shape() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 6.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c: NamedTensor<B, 2> = untyped::div(a, b);
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
+}
+
+#[test]
+fn div_with_slash_operator() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 6.0,
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
+    );
+    let c = a / b;
+    assert_eq!(c.names(), &["M".to_string(), "N".to_string()]);
+    let mean: f32 = c.inner.mean().into_scalar();
+    assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
+}
+
+#[test]
+fn div_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
+    );
+    let scale = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
+    );
+    let out: NamedTensor<B, 2> = untyped::div(mat, scale);
+    let mean: f32 = out.inner.mean().into_scalar();
+    assert!((mean - 5.0).abs() < 1e-4, "expected mean 5.0, got {mean}");
+}
+
+#[test]
+fn mean_reduce() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["SeqLen", "Features"],
+        Tensor::from_data(
+            TensorData::new(
+                vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+                [2usize, 4],
+            ),
+            &dev,
+        ),
+    );
+    let m: NamedTensor<B, 1> = t.mean(["SeqLen"]);
+    assert_eq!(m.names(), &["Features".to_string()]);
+    assert_eq!(m.shape().dims, [4]);
+    // mean over SeqLen: [(1+5)/2, (2+6)/2, (3+7)/2, (4+8)/2] = [3, 4, 5, 6]
+    let val: f32 = m.inner.mean().into_scalar();
+    assert!((val - 4.5).abs() < 1e-4, "expected 4.5, got {val}");
+}
+
+#[test]
+fn mean_multi_dim() {
+    let dev = dev();
+    let t = NamedTensor::<B, 3>::new(
+        ["Batch", "SeqLen", "Features"],
+        Tensor::from_data(
+            TensorData::new(
+                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                [2usize, 3, 4],
+            ),
+            &dev,
+        ),
+    );
+    let m: NamedTensor<B, 1> = t.mean(["Batch", "SeqLen"]);
+    assert_eq!(m.names(), &["Features".to_string()]);
+    assert_eq!(m.shape().dims, [4]);
+    // mean over Batch and SeqLen for each feature
+    let val: f32 = m.inner.mean().into_scalar();
+    assert!((val - 12.5).abs() < 1e-4, "expected 12.5, got {val}");
+}
+
+#[test]
+fn mean_multi_dim_partial() {
+    let dev = dev();
+    let t = NamedTensor::<B, 3>::new(
+        ["Batch", "SeqLen", "Features"],
+        Tensor::from_data(
+            TensorData::new(
+                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                [2usize, 3, 4],
+            ),
+            &dev,
+        ),
+    );
+    let m: NamedTensor<B, 1> = t.mean(["Batch", "SeqLen"]);
+    assert_eq!(m.names(), &["Features".to_string()]);
+    assert_eq!(m.shape().dims, [4]);
+    let val: f32 = m.inner.mean().into_scalar();
+    assert!((val - 12.5).abs() < 1e-4, "expected 12.5, got {val}");
+}
+
+#[test]
+fn div_operator_broadcast() {
+    let dev = dev();
+    let mat = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
+    );
+    let scale = NamedTensor::<B, 1>::new(
+        ["N"],
+        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
+    );
+    let out = mat / scale;
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().dims, [3, 5]);
+    let mean: f32 = out.inner.mean().into_scalar();
+    assert!((mean - 5.0).abs() < 1e-4, "expected mean 5.0, got {mean}");
 }

@@ -2,7 +2,7 @@
 
 use burn::prelude::*;
 use std::marker::PhantomData;
-use std::ops::Add;
+use std::ops::{Add, Sub, Mul, Div};
 
 pub trait DimName {
     const NAME: &'static str;
@@ -258,6 +258,22 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     pub fn dims_str(&self) -> String {
         format!("({})", self.names.join(","))
     }
+
+    /// Mean-reduce over named dims `Ks`.
+    pub fn mean<Ks, Out, Idx, const D_OUT: usize>(self) -> <Out as NamedOut<B, D_OUT>>::Out
+    where
+        Ks: NameList,
+        S: RemoveAll<Ks, Idx, Output = Out>,
+        Out: NamedOut<B, D_OUT>,
+    {
+        mean::<B, Ks, Out, S, Idx, D, D_OUT>(self)
+    }
+
+    /// Drop to an untyped [`crate::untyped::NamedTensor`] for runtime-checked operations.
+    pub fn untyped(self) -> crate::untyped::NamedTensor<B, D> {
+        let names: [String; D] = std::array::from_fn(|i| self.names[i].to_string());
+        crate::untyped::NamedTensor::from_parts(names, self.inner)
+    }
 }
 
 impl<B: Backend, S, const D: usize> Clone for NamedTensor<B, S, D>
@@ -289,13 +305,32 @@ where
     }
 }
 
-impl<B: Backend, S: NameList + Rank, const D: usize> Add for NamedTensor<B, S, D> {
-    type Output = NamedTensor<B, S, D>;
+// Operators use lhs as the output type: all rhs dims must be present in lhs.
+// For true union broadcasting (where the output has dims from both sides),
+// use the free functions `add`, `sub`, `mul`, `div` with an explicit output type.
+macro_rules! impl_op {
+    ($trait:ident, $method:ident, $op:tt) => {
+        impl<B, SL, SR, const DL: usize, const DR: usize> $trait<NamedTensor<B, SR, DR>>
+            for NamedTensor<B, SL, DL>
+        where
+            B: Backend,
+            SL: NameList + Rank,
+            SR: NameList + Rank,
+        {
+            type Output = NamedTensor<B, SL, DL>;
 
-    fn add(self, rhs: NamedTensor<B, S, D>) -> Self::Output {
-        NamedTensor::new(self.inner + rhs.inner)
-    }
+            fn $method(self, rhs: NamedTensor<B, SR, DR>) -> Self::Output {
+                let r = align_to(rhs.inner, &rhs.names, &self.names);
+                NamedTensor::new(self.inner $op r)
+            }
+        }
+    };
 }
+
+impl_op!(Add, add, +);
+impl_op!(Sub, sub, -);
+impl_op!(Mul, mul, *);
+impl_op!(Div, div, /);
 
 /// `DNil` → `f32`, any non-empty dim list → `NamedTensor<B, Self, D>`.
 pub trait NamedOut<B: Backend, const D: usize>: Sized {
@@ -325,25 +360,31 @@ where
 
 pub type Named<B, S, const D: usize> = <S as NamedOut<B, D>>::Out;
 
-/// Element-wise add with union broadcasting. Inputs may differ in rank.
-pub fn add<B, Out, SL, SR, UIdx, const DL: usize, const DR: usize, const D_OUT: usize>(
-    lhs: NamedTensor<B, SL, DL>,
-    rhs: NamedTensor<B, SR, DR>,
-) -> NamedTensor<B, Out, D_OUT>
-where
-    B: Backend,
-    Out: IsUnionOf<SL, SR, UIdx> + NameList + Rank,
-    SL: NameList + Rank,
-    SR: NameList + Rank,
-{
-    let lhs_names = SL::names();
-    let rhs_names = SR::names();
-    let out_names = Out::names();
-
-    let l = align_to(lhs.inner, &lhs_names, &out_names);
-    let r = align_to(rhs.inner, &rhs_names, &out_names);
-    NamedTensor::new(l + r)
+macro_rules! def_binop {
+    ($name:ident, $verb:expr, $op:tt) => {
+        #[doc = concat!("Element-wise ", $verb, " with union broadcasting. Inputs may differ in rank.")]
+        pub fn $name<B, Out, SL, SR, UIdx, const DL: usize, const DR: usize, const D_OUT: usize>(
+            lhs: NamedTensor<B, SL, DL>,
+            rhs: NamedTensor<B, SR, DR>,
+        ) -> NamedTensor<B, Out, D_OUT>
+        where
+            B: Backend,
+            Out: IsUnionOf<SL, SR, UIdx> + NameList + Rank,
+            SL: NameList + Rank,
+            SR: NameList + Rank,
+        {
+            let out_names = Out::names();
+            let l = align_to(lhs.inner, &lhs.names, &out_names);
+            let r = align_to(rhs.inner, &rhs.names, &out_names);
+            NamedTensor::new(l $op r)
+        }
+    };
 }
+
+def_binop!(add, "add", +);
+def_binop!(sub, "subtract", -);
+def_binop!(mul, "multiply", *);
+def_binop!(div, "divide", /);
 
 /// Tensor contraction over a single named dim `K`. Ranks of lhs, rhs, and output may differ.
 pub fn matmul<
@@ -488,6 +529,36 @@ where
     });
 
     let flat: Tensor<B, 1> = reduced.reshape([out_prod]);
+    <Out as NamedOut<B, D_OUT>>::assemble(flat, out_shape)
+}
+
+/// Mean-reduce over named dims `Ks`.
+pub fn mean<B, Ks, Out, S, Idx, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<B, S, D>,
+) -> <Out as NamedOut<B, D_OUT>>::Out
+where
+    B: Backend,
+    Ks: NameList,
+    S: NameList + Rank + RemoveAll<Ks, Idx, Output = Out>,
+    Out: NamedOut<B, D_OUT>,
+{
+    let s_names = S::names();
+    let k_names = Ks::names();
+    let mut inner = t.inner;
+    for k in &k_names {
+        let axis = find_axis(&s_names, k);
+        inner = inner.mean_dim(axis);
+    }
+    let shape = inner.shape().dims;
+    let kept: Vec<usize> = s_names
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| !k_names.contains(n))
+        .map(|(i, _)| shape[i])
+        .collect();
+    let out_shape: [usize; D_OUT] = std::array::from_fn(|i| kept[i]);
+    let prod: usize = out_shape.iter().product::<usize>().max(1);
+    let flat: Tensor<B, 1> = inner.reshape([prod]);
     <Out as NamedOut<B, D_OUT>>::assemble(flat, out_shape)
 }
 
