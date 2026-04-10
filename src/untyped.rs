@@ -3,6 +3,7 @@
 use burn::prelude::*;
 use burn::tensor::Shape;
 use std::collections::HashSet;
+use std::ops::Add;
 
 pub struct NamedTensor<B: Backend, const D: usize> {
     pub inner: Tensor<B, D>,
@@ -49,6 +50,14 @@ impl<B: Backend, const D: usize> std::fmt::Debug for NamedTensor<B, D> {
 impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} {}", self.names, self.inner)
+    }
+}
+
+impl<B: Backend, const D: usize> Add for NamedTensor<B, D> {
+    type Output = NamedTensor<B, D>;
+
+    fn add(self, rhs: NamedTensor<B, D>) -> Self::Output {
+        NamedTensor::from_parts(self.names, self.inner + rhs.inner)
     }
 }
 

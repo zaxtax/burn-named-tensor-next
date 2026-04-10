@@ -2,6 +2,7 @@
 
 use burn::prelude::*;
 use std::marker::PhantomData;
+use std::ops::Add;
 
 pub trait DimName {
     const NAME: &'static str;
@@ -285,6 +286,14 @@ where
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
+    }
+}
+
+impl<B: Backend, S: NameList + Rank, const D: usize> Add for NamedTensor<B, S, D> {
+    type Output = NamedTensor<B, S, D>;
+
+    fn add(self, rhs: NamedTensor<B, S, D>) -> Self::Output {
+        NamedTensor::new(self.inner + rhs.inner)
     }
 }
 
