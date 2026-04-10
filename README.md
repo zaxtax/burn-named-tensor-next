@@ -17,6 +17,73 @@ dim!(Batch, SeqLen, Hidden);
 let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(raw_tensor);
 ```
 
+## Quick start
+
+### Typed API — compile-time checked
+
+Dimension names are zero-sized marker types. The compiler rejects mismatched dims before your code ever runs:
+
+```rust
+use burn::backend::NdArray;
+use burn::tensor::{Shape, Tensor};
+use named_tensor::typed::{matmul, NamedTensor};
+use named_tensor::{dim, dims};
+
+type B = NdArray<f32>;
+
+dim!(Batch, SeqLen, Hidden, Vocab);
+
+let dev = Default::default();
+
+// Create named tensors — the type *is* the documentation
+let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> =
+    NamedTensor::new(Tensor::ones(Shape::new([2, 10, 64]), &dev));
+let w: NamedTensor<B, dims![Hidden, Vocab], 2> =
+    NamedTensor::new(Tensor::ones(Shape::new([64, 1000]), &dev));
+
+// matmul contracts over `Hidden` — result is dims![Batch, SeqLen, Vocab]
+let logits: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
+    matmul(x, w, Hidden);
+
+// Element-wise ops check that dims match at compile time
+let bias: NamedTensor<B, dims![Vocab], 1> =
+    NamedTensor::new(Tensor::zeros(Shape::new([1000]), &dev));
+let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
+    logits + bias;  // broadcasts Vocab into the output
+```
+
+### Untyped API — runtime checked
+
+The same operations with `&str` dim names, checked at runtime. Useful when dim names are only known at runtime, or as a gentler on-ramp:
+
+```rust
+use burn::backend::NdArray;
+use burn::tensor::{Shape, Tensor};
+use named_tensor::{matmul, NamedTensor};
+
+type B = NdArray<f32>;
+
+let dev = Default::default();
+
+let x = NamedTensor::<B, 3>::new(
+    ["Batch", "SeqLen", "Hidden"],
+    Tensor::ones(Shape::new([2, 10, 64]), &dev),
+);
+let w = NamedTensor::<B, 2>::new(
+    ["Hidden", "Vocab"],
+    Tensor::ones(Shape::new([64, 1000]), &dev),
+);
+
+let logits: NamedTensor<B, 3> = matmul(x, w, "Hidden");
+let bias = NamedTensor::<B, 1>::new(
+    ["Vocab"],
+    Tensor::zeros(Shape::new([1000]), &dev),
+);
+let out: NamedTensor<B, 3> = logits + bias;
+```
+
+The untyped module mirrors the typed surface (`NamedTensor`, `add`, `matmul`, `dot`, `sum`, `permute`, `rename`) but swaps type-level dim markers for string literals.
+
 ## How the type-level machinery works
 
 ### 1. Dimension markers via `DimName`
@@ -168,22 +235,6 @@ let s = sum_dim::<B, K, _, _, _, 2, 1>(t, 0);
 | `dot(a, b)` | Same type `S` for both | Both vectors must name the same dimension |
 | `sum_dim(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
-
-## Running the demos
-
-Typed API — dim names are marker types, all checks at compile time:
-
-```sh
-cargo run --bin typed_demo
-```
-
-Untyped API — the same operations with `&str` dim names, checked at run time. Exposed under `named_tensor::untyped`:
-
-```sh
-cargo run --bin untyped_demo
-```
-
-The untyped module mirrors the typed surface (`NamedTensor`, `add`, `matmul`, `dot`, `sum`, `permute`, `rename`) but swaps type-level dim markers for string literals — useful when dim names are only known at run time, or as a gentler on-ramp before reaching for the type-level version.
 
 ## How this differs from prior work
 
