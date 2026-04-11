@@ -376,30 +376,32 @@ where
 
 pub type Named<B, S, const D: usize> = <S as NamedOut<B, D>>::Out;
 
-/// Return type for [`dot`]. Implemented for `f32` (scalar contraction, all
-/// dims shared) and `NamedTensor<B, S, D>` (partial contraction).
+/// Inverse of [`NamedOut`]: given a concrete result type (`f32` or
+/// `NamedTensor<B, S, D>`), recovers the dimension list and knows how to
+/// assemble the value from a flat tensor.
 ///
-/// The associated type `Dims` is the output's dimension list; [`dot`] uses
-/// it inside the [`Exclusive`] bound so the compiler can disambiguate
-/// shared vs. exclusive dims *before* resolving the full return type.
-pub trait DotResult<B: Backend>: Sized {
+/// This lets generic functions use the *return-type annotation* to drive
+/// trait-solver inference — the solver resolves `Ret` first (it's the
+/// return type), then reads `Ret::Dims` to feed into downstream bounds
+/// like [`Exclusive`].
+pub trait IntoNamedResult<B: Backend>: Sized {
     type Dims: NameList + Rank;
-    fn assemble_dot(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self;
+    fn assemble(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self;
 }
 
-impl<B: Backend> DotResult<B> for f32
+impl<B: Backend> IntoNamedResult<B> for f32
 where
     B::FloatElem: Into<f32>,
 {
     type Dims = DNil;
-    fn assemble_dot(flat: Tensor<B, 1>, _raw_shape: &[usize], _raw_names: &[&'static str]) -> f32 {
+    fn assemble(flat: Tensor<B, 1>, _raw_shape: &[usize], _raw_names: &[&'static str]) -> f32 {
         flat.into_scalar().into()
     }
 }
 
-impl<B: Backend, S: NameList + Rank, const D: usize> DotResult<B> for NamedTensor<B, S, D> {
+impl<B: Backend, S: NameList + Rank, const D: usize> IntoNamedResult<B> for NamedTensor<B, S, D> {
     type Dims = S;
-    fn assemble_dot(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self {
+    fn assemble(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self {
         let shape: [usize; D] = std::array::from_fn(|i| raw_shape[i]);
         let tensor: Tensor<B, D> = flat.reshape(shape);
         let out_names = S::names();
@@ -559,7 +561,7 @@ pub fn dot<B, SL, SR, Ret, LIdx, RIdx, const DL: usize, const DR: usize>(
 ) -> Ret
 where
     B: Backend,
-    Ret: DotResult<B>,
+    Ret: IntoNamedResult<B>,
     SL: NameList + Rank + Exclusive<SR, Ret::Dims, LIdx>,
     SR: NameList + Rank + Exclusive<SL, Ret::Dims, RIdx>,
 {
@@ -622,7 +624,7 @@ where
     let raw_shape: Vec<usize> = m_sizes.iter().chain(&n_sizes).copied().collect();
     let raw_names: Vec<&'static str> = m.iter().chain(&n).copied().collect();
 
-    Ret::assemble_dot(flat, &raw_shape, &raw_names)
+    Ret::assemble(flat, &raw_shape, &raw_names)
 }
 
 /// Sum-reduce over named dim `C`.
