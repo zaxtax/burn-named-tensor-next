@@ -23,6 +23,11 @@ macro_rules! dim {
 pub struct Here;
 pub struct There<I>(PhantomData<I>);
 
+/// Marker: this dim is shared with the other tensor (will be contracted).
+pub struct IsShared;
+/// Marker: this dim is exclusive to this tensor (will be kept).
+pub struct IsExclusive;
+
 pub struct DNil;
 pub struct DCons<H, T>(PhantomData<fn() -> (H, T)>);
 
@@ -111,6 +116,44 @@ where
     <S as Remove<KH, IH>>::Output: RemoveAll<KT, IT>,
 {
     type Output = <<S as Remove<KH, IH>>::Output as RemoveAll<KT, IT>>::Output;
+}
+
+/// Partitions `Self` relative to `Other`, using `Out` (the expected output dim
+/// list) to disambiguate: a **shared** dim appears in `Other` (and is
+/// contracted away), while an **exclusive** dim appears in `Out` (and is kept).
+///
+/// The compiler can always pick exactly one branch because:
+/// - A shared dim is in `Other` but *not* in `Out` → only `IsShared` applies.
+/// - An exclusive dim is in `Out` but *not* in `Other` → only `IsExclusive` applies.
+/// - If a dim is in *both* `Other` and `Out`, the user's output annotation is
+///   wrong (a contracted dim shouldn't survive); the compiler reports ambiguity.
+/// - If a dim is in *neither*, the output is missing a required dim; the
+///   compiler reports an unsatisfied bound.
+#[diagnostic::on_unimplemented(
+    message = "cannot partition `{Self}` into shared/exclusive dims given `{Other}` and output `{Out}`",
+    note = "each dim in `{Self}` must be shared (in `{Other}`, contracted) or exclusive (in `{Out}`, kept) — but not both and not neither"
+)]
+pub trait Exclusive<Other, Out, Idx> {
+    type Output;
+}
+impl<Other, Out> Exclusive<Other, Out, ()> for DNil {
+    type Output = DNil;
+}
+/// Dim `H` is shared with `Other` — contracted away, not in output.
+impl<H, T, Other, Out, IH, IT> Exclusive<Other, Out, (IsShared, IH, IT)> for DCons<H, T>
+where
+    Other: Contains<H, IH>,
+    T: Exclusive<Other, Out, IT>,
+{
+    type Output = <T as Exclusive<Other, Out, IT>>::Output;
+}
+/// Dim `H` is exclusive to `Self` — kept in output.
+impl<H, T, Other, Out, IO, IT> Exclusive<Other, Out, (IsExclusive, IO, IT)> for DCons<H, T>
+where
+    Out: Contains<H, IO>,
+    T: Exclusive<Other, Out, IT>,
+{
+    type Output = DCons<H, <T as Exclusive<Other, Out, IT>>::Output>;
 }
 
 #[diagnostic::on_unimplemented(
@@ -202,33 +245,6 @@ fn align_to<B: Backend, const D_IN: usize, const D_OUT: usize>(
         .collect();
 
     permute_if_needed(expanded, &build_perm(&current, target_names))
-}
-
-fn reduce_to_flat<B: Backend, const D_IN: usize, const D_OUT: usize>(
-    t: Tensor<B, D_IN>,
-    t_names: &[&'static str],
-    contract: &[&'static str],
-) -> (Tensor<B, 1>, [usize; D_OUT]) {
-    let out_names: Vec<&'static str> = t_names
-        .iter()
-        .copied()
-        .filter(|n| !contract.contains(n))
-        .collect();
-    let target: Vec<&'static str> = out_names
-        .iter()
-        .copied()
-        .chain(contract.iter().copied())
-        .collect();
-    let p = permute_if_needed(t, &build_perm(t_names, &target));
-
-    let p_shape = p.shape().dims;
-    let out_prod: usize = p_shape[..out_names.len()].iter().product();
-    let contract_prod: usize = p_shape[out_names.len()..].iter().product();
-    let out_shape: [usize; D_OUT] = std::array::from_fn(|i| p_shape[i]);
-
-    let r2: Tensor<B, 2> = p.reshape([out_prod, contract_prod]);
-    let flat: Tensor<B, 1> = r2.sum_dim(1).reshape([out_prod]);
-    (flat, out_shape)
 }
 
 pub struct NamedTensor<B: Backend, S, const D: usize> {
@@ -360,6 +376,38 @@ where
 
 pub type Named<B, S, const D: usize> = <S as NamedOut<B, D>>::Out;
 
+/// Return type for [`dot`]. Implemented for `f32` (scalar contraction, all
+/// dims shared) and `NamedTensor<B, S, D>` (partial contraction).
+///
+/// The associated type `Dims` is the output's dimension list; [`dot`] uses
+/// it inside the [`Exclusive`] bound so the compiler can disambiguate
+/// shared vs. exclusive dims *before* resolving the full return type.
+pub trait DotResult<B: Backend>: Sized {
+    type Dims: NameList + Rank;
+    fn assemble_dot(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self;
+}
+
+impl<B: Backend> DotResult<B> for f32
+where
+    B::FloatElem: Into<f32>,
+{
+    type Dims = DNil;
+    fn assemble_dot(flat: Tensor<B, 1>, _raw_shape: &[usize], _raw_names: &[&'static str]) -> f32 {
+        flat.into_scalar().into()
+    }
+}
+
+impl<B: Backend, S: NameList + Rank, const D: usize> DotResult<B> for NamedTensor<B, S, D> {
+    type Dims = S;
+    fn assemble_dot(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self {
+        let shape: [usize; D] = std::array::from_fn(|i| raw_shape[i]);
+        let tensor: Tensor<B, D> = flat.reshape(shape);
+        let out_names = S::names();
+        let perm = build_perm(raw_names, &out_names);
+        NamedTensor::new(permute_if_needed(tensor, &perm))
+    }
+}
+
 macro_rules! def_binop {
     ($name:ident, $verb:expr, $op:tt) => {
         #[doc = concat!("Element-wise ", $verb, " with union broadcasting. Inputs may differ in rank.")]
@@ -485,24 +533,96 @@ where
     NamedTensor::new(permute_if_needed(raw_out, &build_perm(&raw_names, &out_names)))
 }
 
-/// Contraction over every dim in `rhs`. `rhs`'s dim list must be contained in `lhs`'s.
-pub fn dot<B, SL, SR, Out, Idx, const DL: usize, const DR: usize, const D_OUT: usize>(
+/// Contraction over every shared dim between `lhs` and `rhs`.
+///
+/// Each side may carry dims the other does not. Shared dims are contracted
+/// (summed out); exclusive dims from both sides are kept in the output.
+///
+/// At compile time, [`Exclusive`] checks that every dim in each input is either
+/// **shared** (present in the other input, contracted away) or **exclusive**
+/// (present in the output dims, kept). If a dim appears in both the other input
+/// AND the output, the compiler reports ambiguity — a contracted dim shouldn't
+/// survive. If a dim is in neither, it reports an unsatisfied bound.
+///
+/// The return type drives inference: annotate as `f32` for a full contraction
+/// (all dims shared) or as `NamedTensor<B, dims![…], D>` for a partial one.
+///
+/// ```text
+/// lhs: dims![Batch, Features]
+/// rhs: dims![Features, Classes]
+///   → shared = Features (contracted)
+///   → output = dims![Batch, Classes]
+/// ```
+pub fn dot<B, SL, SR, Ret, LIdx, RIdx, const DL: usize, const DR: usize>(
     lhs: NamedTensor<B, SL, DL>,
     rhs: NamedTensor<B, SR, DR>,
-) -> <Out as NamedOut<B, D_OUT>>::Out
+) -> Ret
 where
     B: Backend,
-    SL: NameList + Rank + RemoveAll<SR, Idx, Output = Out>,
-    SR: NameList + Rank,
-    Out: NamedOut<B, D_OUT>,
+    Ret: DotResult<B>,
+    SL: NameList + Rank + Exclusive<SR, Ret::Dims, LIdx>,
+    SR: NameList + Rank + Exclusive<SL, Ret::Dims, RIdx>,
 {
     let lhs_names = SL::names();
     let rhs_names = SR::names();
 
-    let rhs_aligned: Tensor<B, DL> = align_to(rhs.inner, &rhs_names, &lhs_names);
-    let product: Tensor<B, DL> = lhs.inner * rhs_aligned;
-    let (flat, out_shape) = reduce_to_flat::<B, DL, D_OUT>(product, &lhs_names, &rhs_names);
-    <Out as NamedOut<B, D_OUT>>::assemble(flat, out_shape)
+    let shared: Vec<&'static str> = lhs_names
+        .iter()
+        .copied()
+        .filter(|n| rhs_names.contains(n))
+        .collect();
+    let m: Vec<&'static str> = lhs_names
+        .iter()
+        .copied()
+        .filter(|n| !rhs_names.contains(n))
+        .collect();
+    let n: Vec<&'static str> = rhs_names
+        .iter()
+        .copied()
+        .filter(|n| !lhs_names.contains(n))
+        .collect();
+
+    // Runtime size check for shared dims
+    for &k in &shared {
+        let l_size = lhs.inner.shape().dims[find_axis(&lhs_names, k)];
+        let r_size = rhs.inner.shape().dims[find_axis(&rhs_names, k)];
+        assert_eq!(l_size, r_size, "dot: shared dim '{k}' size mismatch");
+    }
+
+    // Permute lhs to [m..., shared...] and rhs to [shared..., n...]
+    let lhs_target: Vec<&'static str> = m.iter().chain(&shared).copied().collect();
+    let rhs_target: Vec<&'static str> = shared.iter().chain(&n).copied().collect();
+
+    let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
+    let rhs_p = permute_if_needed(rhs.inner, &build_perm(&rhs_names, &rhs_target));
+
+    let lhs_shape = lhs_p.shape().dims;
+    let rhs_shape = rhs_p.shape().dims;
+
+    let m_sizes: Vec<usize> = lhs_shape[..m.len()].to_vec();
+    let n_sizes: Vec<usize> = rhs_shape[shared.len()..].to_vec();
+    let shared_prod: usize = shared
+        .iter()
+        .enumerate()
+        .map(|(i, _)| lhs_shape[m.len() + i])
+        .product::<usize>()
+        .max(1);
+
+    let m_prod: usize = m_sizes.iter().product::<usize>().max(1);
+    let n_prod: usize = n_sizes.iter().product::<usize>().max(1);
+
+    // Contract via batched matmul: [m_prod, shared_prod] × [shared_prod, n_prod]
+    let lhs2: Tensor<B, 2> = lhs_p.reshape([m_prod, shared_prod]);
+    let rhs2: Tensor<B, 2> = rhs_p.reshape([shared_prod, n_prod]);
+    let result2: Tensor<B, 2> = lhs2.matmul(rhs2);
+
+    let total = m_prod * n_prod;
+    let flat: Tensor<B, 1> = result2.reshape([total]);
+
+    let raw_shape: Vec<usize> = m_sizes.iter().chain(&n_sizes).copied().collect();
+    let raw_names: Vec<&'static str> = m.iter().chain(&n).copied().collect();
+
+    Ret::assemble_dot(flat, &raw_shape, &raw_names)
 }
 
 /// Sum-reduce over named dim `C`.

@@ -5,7 +5,7 @@ use burn::tensor::{Shape, Tensor, TensorData};
 use named_tensor::typed::{add, div, dot, matmul, mul, permute, rename, sub, sum, NamedTensor};
 use named_tensor::{dim, dims};
 
-dim!(Batch, M, K, N, Features, SeqLen, Hidden);
+dim!(Batch, M, K, N, Features, SeqLen, Hidden, Classes);
 
 type B = NdArray<f32>;
 
@@ -213,6 +213,60 @@ fn dot_broadcast() {
     assert_eq!(out.shape().dims, [3]);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 20.0).abs() < 1e-4, "expected mean 20.0, got {mean}");
+}
+
+#[test]
+fn dot_partial_contraction() {
+    // lhs: (Batch=2, Features=3), rhs: (Features=3, Classes=4)
+    // shared: Features → contracted; output: (Batch=2, Classes=4)
+    let dev = dev();
+    let lhs: NamedTensor<B, dims![Batch, Features], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            vec![1.0f32, 0.0, 0.0, 0.0, 1.0, 0.0], // 2×3 identity-ish
+            [2usize, 3],
+        ),
+        &dev,
+    ));
+    // rhs is 3×4 where each column j is filled with (j+1)
+    let rhs: NamedTensor<B, dims![Features, Classes], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            vec![
+                1.0f32, 2.0, 3.0, 4.0, // row 0
+                1.0, 2.0, 3.0, 4.0, // row 1
+                1.0, 2.0, 3.0, 4.0, // row 2
+            ],
+            [3usize, 4],
+        ),
+        &dev,
+    ));
+    let out: NamedTensor<B, dims![Batch, Classes], 2> = dot(lhs, rhs);
+    assert_eq!(out.dim_names(), &["Batch", "Classes"]);
+    assert_eq!(out.shape().dims, [2, 4]);
+    // row 0 of lhs is [1,0,0], dot with each rhs column → [1,2,3,4]
+    // row 1 of lhs is [0,1,0], dot with each rhs column → [1,2,3,4]
+    let data: Vec<f32> = out.inner.to_data().to_vec().unwrap();
+    assert_eq!(data, vec![1.0, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0]);
+}
+
+#[test]
+fn dot_partial_contraction_reversed_output() {
+    // Same as above but output dims in reverse order: (Classes, Batch)
+    let dev = dev();
+    let lhs: NamedTensor<B, dims![Batch, Features], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    let rhs: NamedTensor<B, dims![Features, Classes], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 0.0, 0.0, 1.0, 0.0, 0.0], [3usize, 2]),
+        &dev,
+    ));
+    // lhs×rhs = [[1,2],[4,5]] in (Batch, Classes) order
+    // Transposed to (Classes, Batch): [[1,4],[2,5]]
+    let out: NamedTensor<B, dims![Classes, Batch], 2> = dot(lhs, rhs);
+    assert_eq!(out.dim_names(), &["Classes", "Batch"]);
+    assert_eq!(out.shape().dims, [2, 2]);
+    let data: Vec<f32> = out.inner.to_data().to_vec().unwrap();
+    assert_eq!(data, vec![1.0, 4.0, 2.0, 5.0]);
 }
 
 #[test]
