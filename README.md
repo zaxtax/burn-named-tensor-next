@@ -41,9 +41,9 @@ let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> =
 let w: NamedTensor<B, dims![Hidden, Vocab], 2> =
     NamedTensor::new(Tensor::ones(Shape::new([64, 1000]), &dev));
 
-// matmul contracts over `Hidden` — result is dims![Batch, SeqLen, Vocab]
+// matmul contracts over `Hidden` (shared, not in output) — result is dims![Batch, SeqLen, Vocab]
 let logits: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
-    matmul(x, w, Hidden);
+    matmul(x, w);
 
 // Element-wise ops check that dims match at compile time
 let bias: NamedTensor<B, dims![Vocab], 1> =
@@ -195,14 +195,14 @@ let b: NamedTensor<B, dims![M, P], 2> = ...;
 let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
 ```
 
-### Wrong contraction dim in matmul
+### Wrong output dims in matmul
 
 ```rust
 let lhs: NamedTensor<B, dims![M, K], 2> = ...;
 let rhs: NamedTensor<B, dims![K, N], 2> = ...;
 
-// ERROR: Contains<N, _> is not satisfied for dims![M, K]
-let c: NamedTensor<B, dims![M, K], 2> = matmul(lhs, rhs, N);
+// PANIC: output dim 'P' is not in either input
+let c: NamedTensor<B, dims![M, P], 2> = matmul(lhs, rhs);
 ```
 
 ### Dot product on different dims
@@ -231,8 +231,8 @@ let s = sum_dim::<B, K, _, _, _, 2, 1>(t, 0);
 | Operation | Constraint | What it means |
 |-----------|-----------|---------------|
 | `add(lhs, rhs)` | `Out: IsUnionOf<SL, SR>` | Output dims must be the union of both inputs |
-| `matmul(lhs, rhs, K)` | `SL: Contains<K>`, `SR: Contains<K>`, `Out: IsUnionOf<SL\K, SR\K>` | Both inputs must have K; output is the union of the remaining dims |
-| `dot(a, b)` | Same type `S` for both | Both vectors must name the same dimension |
+| `matmul(lhs, rhs)` | `SL: NameList`, `SR: NameList`, `Ret: IntoNamedResult` | Shared dims not in output are contracted; shared dims in output are batched. Supports multi-dim contraction and `f32` return for full contraction |
+| `dot(a, b)` | `SL: Exclusive<SR, Out>`, `SR: Exclusive<SL, Out>` | All shared dims are contracted; result driven by return type (`f32` or `NamedTensor`) |
 | `sum_dim(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
 

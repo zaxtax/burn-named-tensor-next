@@ -16,9 +16,9 @@ fn main() {
     let w: NamedTensor<B, dims![Hidden, Vocab], 2> =
         NamedTensor::new(Tensor::ones(Shape::new([64, 1000]), &dev));
 
-    // matmul contracts over `Hidden` — result is dims![Batch, SeqLen, Vocab]
+    // matmul contracts over `Hidden` (shared, not in output) — result is dims![Batch, SeqLen, Vocab]
     let logits: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
-        matmul(x, w, Hidden);
+        matmul(x, w);
 
     // Element-wise ops check that dims match at compile time
     let bias: NamedTensor<B, dims![Vocab], 1> =

@@ -90,16 +90,6 @@ where
     type Output = DCons<H, <T as Remove<D, I>>::Output>;
 }
 
-pub trait Append<D> {
-    type Output;
-}
-impl<D> Append<D> for DNil {
-    type Output = DCons<D, DNil>;
-}
-impl<H, T: Append<D>, D> Append<D> for DCons<H, T> {
-    type Output = DCons<H, <T as Append<D>>::Output>;
-}
-
 #[diagnostic::on_unimplemented(
     message = "dim list `{Ks}` is not fully contained in `{Self}`",
     note = "every dim in `{Ks}` must appear in `{Self}` so it can be removed"
@@ -436,72 +426,102 @@ def_binop!(sub, "subtract", -);
 def_binop!(mul, "multiply", *);
 def_binop!(div, "divide", /);
 
-/// Tensor contraction over a single named dim `K`. Ranks of lhs, rhs, and output may differ.
-pub fn matmul<
-    B,
-    K,
-    Out,
-    SL,
-    SR,
-    KIdxL,
-    KIdxR,
-    UIdx,
-    const DL: usize,
-    const DR: usize,
-    const D_OUT: usize,
->(
+/// Tensor contraction over shared dims not present in the output.
+///
+/// Shared dims that **are** in the output become batch dims; shared dims
+/// that are **not** in the output are contracted. The return type drives
+/// inference — annotate as `NamedTensor<B, dims![…], D>` for a partial
+/// contraction or `f32` for a full one.
+///
+/// ```text
+/// lhs: dims![Batch, M, K]
+/// rhs: dims![Batch, K, N]
+///   → contracted = K (in both inputs, not in output)
+///   → batch      = Batch (in both inputs and output)
+///   → output     = dims![Batch, M, N]
+/// ```
+pub fn matmul<B, SL, SR, Ret, const DL: usize, const DR: usize>(
     lhs: NamedTensor<B, SL, DL>,
     rhs: NamedTensor<B, SR, DR>,
-    _contract: K,
-) -> NamedTensor<B, Out, D_OUT>
+) -> Ret
 where
     B: Backend,
-    K: DimName,
-    SL: Contains<K, KIdxL> + Remove<K, KIdxL> + NameList + Rank,
-    SR: Contains<K, KIdxR> + Remove<K, KIdxR> + NameList + Rank,
-    Out: IsUnionOf<<SL as Remove<K, KIdxL>>::Output, <SR as Remove<K, KIdxR>>::Output, UIdx>
-        + NameList
-        + Rank,
+    Ret: IntoNamedResult<B>,
+    Ret::Dims: NameList + Rank,
+    SL: NameList + Rank,
+    SR: NameList + Rank,
 {
     let lhs_names = SL::names();
     let rhs_names = SR::names();
-    let out_names = Out::names();
-    let k = K::NAME;
+    let out_names = Ret::Dims::names();
 
-    let k_size = lhs.inner.shape().dims[find_axis(&lhs_names, k)];
-    assert_eq!(
-        k_size,
-        rhs.inner.shape().dims[find_axis(&rhs_names, k)],
-        "matmul: K='{k}' size mismatch",
-    );
-
+    let contracted: Vec<&'static str> = lhs_names
+        .iter()
+        .copied()
+        .filter(|n| rhs_names.contains(n) && !out_names.contains(n))
+        .collect();
     let batch: Vec<&'static str> = lhs_names
         .iter()
         .copied()
-        .filter(|&n| n != k && rhs_names.contains(&n))
+        .filter(|n| rhs_names.contains(n) && out_names.contains(n))
         .collect();
     let m: Vec<&'static str> = lhs_names
         .iter()
         .copied()
-        .filter(|&n| n != k && !rhs_names.contains(&n))
+        .filter(|n| !rhs_names.contains(n))
         .collect();
     let n: Vec<&'static str> = rhs_names
         .iter()
         .copied()
-        .filter(|&n| n != k && !lhs_names.contains(&n))
+        .filter(|n| !lhs_names.contains(n))
         .collect();
 
+    assert!(
+        !contracted.is_empty(),
+        "matmul: no dims to contract between {:?} and {:?} given output {:?}",
+        lhs_names,
+        rhs_names,
+        out_names,
+    );
+
+    for &d in &lhs_names {
+        assert!(
+            rhs_names.contains(&d) || out_names.contains(&d),
+            "matmul: lhs dim '{d}' is not in rhs or output",
+        );
+    }
+    for &d in &rhs_names {
+        assert!(
+            lhs_names.contains(&d) || out_names.contains(&d),
+            "matmul: rhs dim '{d}' is not in lhs or output",
+        );
+    }
+    for &d in &out_names {
+        assert!(
+            lhs_names.contains(&d) || rhs_names.contains(&d),
+            "matmul: output dim '{d}' is not in either input",
+        );
+    }
+
+    for &k in &contracted {
+        let l_size = lhs.inner.shape().dims[find_axis(&lhs_names, k)];
+        let r_size = rhs.inner.shape().dims[find_axis(&rhs_names, k)];
+        assert_eq!(l_size, r_size, "matmul: contracted dim '{k}' size mismatch");
+    }
+
+    // lhs → [batch..., m..., contracted...]
     let lhs_target: Vec<&'static str> = batch
         .iter()
         .chain(&m)
+        .chain(&contracted)
         .copied()
-        .chain(std::iter::once(k))
         .collect();
+    // rhs → [batch..., contracted..., n...]
     let rhs_target: Vec<&'static str> = batch
         .iter()
+        .chain(&contracted)
+        .chain(&n)
         .copied()
-        .chain(std::iter::once(k))
-        .chain(n.iter().copied())
         .collect();
 
     let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
@@ -511,28 +531,31 @@ where
     let rhs_shape = rhs_p.shape().dims;
     let batch_sizes: Vec<usize> = lhs_shape[..batch.len()].to_vec();
     let m_sizes: Vec<usize> = lhs_shape[batch.len()..batch.len() + m.len()].to_vec();
-    let n_sizes: Vec<usize> = rhs_shape[batch.len() + 1..].to_vec();
+    let n_sizes: Vec<usize> = rhs_shape[batch.len() + contracted.len()..].to_vec();
 
-    let prod = |xs: &[usize]| xs.iter().product::<usize>();
+    let prod = |xs: &[usize]| xs.iter().product::<usize>().max(1);
     let (batch_prod, m_prod, n_prod) = (prod(&batch_sizes), prod(&m_sizes), prod(&n_sizes));
+    let k_prod: usize = lhs_shape[batch.len() + m.len()..]
+        .iter()
+        .product::<usize>()
+        .max(1);
 
-    let lhs3: Tensor<B, 3> = lhs_p.reshape([batch_prod, m_prod, k_size]);
-    let rhs3: Tensor<B, 3> = rhs_p.reshape([batch_prod, k_size, n_prod]);
+    let lhs3: Tensor<B, 3> = lhs_p.reshape([batch_prod, m_prod, k_prod]);
+    let rhs3: Tensor<B, 3> = rhs_p.reshape([batch_prod, k_prod, n_prod]);
     let raw3: Tensor<B, 3> = lhs3.matmul(rhs3);
 
     let raw_names: Vec<&'static str> = batch.iter().chain(&m).chain(&n).copied().collect();
-    let raw_shape: [usize; D_OUT] = std::array::from_fn(|i| {
-        if i < batch.len() {
-            batch_sizes[i]
-        } else if i < batch.len() + m.len() {
-            m_sizes[i - batch.len()]
-        } else {
-            n_sizes[i - batch.len() - m.len()]
-        }
-    });
-    let raw_out: Tensor<B, D_OUT> = raw3.reshape(raw_shape);
+    let raw_shape: Vec<usize> = batch_sizes
+        .iter()
+        .chain(&m_sizes)
+        .chain(&n_sizes)
+        .copied()
+        .collect();
 
-    NamedTensor::new(permute_if_needed(raw_out, &build_perm(&raw_names, &out_names)))
+    let total: usize = raw_shape.iter().product::<usize>().max(1);
+    let flat: Tensor<B, 1> = raw3.reshape([total]);
+
+    Ret::assemble(flat, &raw_shape, &raw_names)
 }
 
 /// Contraction over every shared dim between `lhs` and `rhs`.

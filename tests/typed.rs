@@ -5,7 +5,7 @@ use burn::tensor::{Shape, Tensor, TensorData};
 use named_tensor::typed::{add, div, dot, matmul, mul, permute, rename, sub, sum, NamedTensor};
 use named_tensor::{dim, dims};
 
-dim!(Batch, M, K, N, Features, SeqLen, Hidden, Classes);
+dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes);
 
 type B = NdArray<f32>;
 
@@ -96,7 +96,7 @@ fn matmul_2d_standard() {
         TensorData::new(rhs_data, [4usize, 5]),
         &dev,
     ));
-    let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
+    let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
     assert_eq!(c.dim_names(), &["M", "N"]);
     assert_eq!(c.shape().dims, [3, 5]);
 }
@@ -115,7 +115,7 @@ fn matmul_2d_k_nonstandard() {
         ),
         &dev,
     ));
-    let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs, K);
+    let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
     assert_eq!(c.dim_names(), &["M", "N"]);
     assert_eq!(c.shape().dims, [3, 5]);
 }
@@ -137,7 +137,7 @@ fn matmul_3d_batched() {
         ),
         &dev,
     ));
-    let out: NamedTensor<B, dims![Batch, M, N], 3> = matmul(lhs, rhs, K);
+    let out: NamedTensor<B, dims![Batch, M, N], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["Batch", "M", "N"]);
     assert_eq!(out.shape().dims, [2, 3, 5]);
 }
@@ -159,7 +159,7 @@ fn matmul_3d_k_middle() {
         ),
         &dev,
     ));
-    let out: NamedTensor<B, dims![M, Batch, N], 3> = matmul(lhs, rhs, K);
+    let out: NamedTensor<B, dims![M, Batch, N], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["M", "Batch", "N"]);
     assert_eq!(out.shape().dims, [3, 2, 5]);
 }
@@ -178,9 +178,43 @@ fn matmul_mixed_rank() {
         ),
         &dev,
     ));
-    let out: NamedTensor<B, dims![M, N, Batch], 3> = matmul(lhs, rhs, K);
+    let out: NamedTensor<B, dims![M, N, Batch], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["M", "N", "Batch"]);
     assert_eq!(out.shape().dims, [3, 5, 4]);
+}
+
+#[test]
+fn matmul_multi_contract() {
+    let dev = dev();
+    // Contract over two dims (K and K2) simultaneously
+    let lhs: NamedTensor<B, dims![M, K, K2], 3> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+            [2usize, 3, 4],
+        ),
+        &dev,
+    ));
+    let rhs: NamedTensor<B, dims![K, K2, N], 3> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            (1..=60).map(|x| x as f32 * 0.01).collect::<Vec<_>>(),
+            [3usize, 4, 5],
+        ),
+        &dev,
+    ));
+    let out: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().dims, [2, 5]);
+}
+
+#[test]
+fn matmul_to_scalar() {
+    let dev = dev();
+    let lhs: NamedTensor<B, dims![K], 1> =
+        NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0], &dev));
+    let rhs: NamedTensor<B, dims![K], 1> =
+        NamedTensor::new(Tensor::from_data([4.0f32, 5.0, 6.0], &dev));
+    let s: f32 = matmul(lhs, rhs);
+    assert!((s - 32.0).abs() < 1e-4, "expected 32.0, got {s}");
 }
 
 #[test]
