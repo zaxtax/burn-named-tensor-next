@@ -176,7 +176,7 @@ pub trait ReplaceFirst<Old, New, Idx> { type Output; }
 Swaps one dim marker for another in the type-level list. The `rename` function uses this — it changes the type but emits zero machine code:
 
 ```rust
-let s: NamedTensor<B, dims![Features], 1> = sum_dim(...);
+let s: NamedTensor<B, dims![Features], 1> = sum(...);
 let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
 // No runtime work — just a type change.
 ```
@@ -195,16 +195,6 @@ let b: NamedTensor<B, dims![M, P], 2> = ...;
 let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
 ```
 
-### Wrong output dims in matmul
-
-```rust
-let lhs: NamedTensor<B, dims![M, K], 2> = ...;
-let rhs: NamedTensor<B, dims![K, N], 2> = ...;
-
-// PANIC: output dim 'P' is not in either input
-let c: NamedTensor<B, dims![M, P], 2> = matmul(lhs, rhs);
-```
-
 ### Dot product on different dims
 
 ```rust
@@ -213,8 +203,9 @@ dim!(Features, Time);
 let u: NamedTensor<B, dims![Features], 1> = ...;
 let v: NamedTensor<B, dims![Time], 1> = ...;
 
-// ERROR: dims![Features] ≠ dims![Time], so the S parameter can't unify
-dot(u, v);
+// ERROR: with `Ret = f32` (Dims = DNil), neither `Features` nor `Time`
+// is shared with the other input or present in the output — `Exclusive` fails
+let _: f32 = dot(u, v);
 ```
 
 ### Removing a dim that doesn't exist
@@ -223,7 +214,7 @@ dot(u, v);
 let t: NamedTensor<B, dims![M, N], 2> = ...;
 
 // ERROR: Contains<K, _> not satisfied for dims![M, N]
-let s = sum_dim::<B, K, _, _, _, 2, 1>(t, 0);
+let s = sum::<B, K, _, _, _, 2, 1>(t);
 ```
 
 ## Operations and their type-level contracts
@@ -233,7 +224,7 @@ let s = sum_dim::<B, K, _, _, _, 2, 1>(t, 0);
 | `add(lhs, rhs)` | `Out: IsUnionOf<SL, SR>` | Output dims must be the union of both inputs |
 | `matmul(lhs, rhs)` | `SL: NameList`, `SR: NameList`, `Ret: IntoNamedResult` | Shared dims not in output are contracted; shared dims in output are batched. Supports multi-dim contraction and `f32` return for full contraction |
 | `dot(a, b)` | `SL: Exclusive<SR, Out>`, `SR: Exclusive<SL, Out>` | All shared dims are contracted; result driven by return type (`f32` or `NamedTensor`) |
-| `sum_dim(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
+| `sum(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
 
 ## How this differs from prior work
