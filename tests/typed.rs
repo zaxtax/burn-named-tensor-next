@@ -1,15 +1,15 @@
 #![allow(clippy::type_complexity)]
 
-use burn::backend::NdArray;
+use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor, TensorData};
 use named_tensor::typed::{add, div, dot, matmul, mul, permute, rename, sub, sum, NamedTensor};
 use named_tensor::{dim, dims};
 
 dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes);
 
-type B = NdArray<f32>;
+type B = Flex<f32>;
 
-fn dev() -> <B as burn::prelude::Backend>::Device {
+fn dev() -> burn::prelude::Device<B> {
     Default::default()
 }
 
@@ -22,7 +22,7 @@ fn add_same_shape() {
         NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0);
     let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
     assert_eq!(c.dim_names(), &["M", "N"]);
-    assert_eq!(c.shape().dims, [3, 5]);
+    assert_eq!(c.shape().to_vec(), [3, 5]);
     let mean: f32 = c.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
@@ -36,7 +36,7 @@ fn add_with_plus_operator() {
         NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0);
     let c = a + b;
     assert_eq!(c.dim_names(), &["M", "N"]);
-    assert_eq!(c.shape().dims, [3, 5]);
+    assert_eq!(c.shape().to_vec(), [3, 5]);
     let mean: f32 = c.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
@@ -52,7 +52,7 @@ fn add_rank2_rank1_broadcast() {
         NamedTensor::new(Tensor::from_data([0.1f32, 0.2, 0.3, 0.4, 0.5], &dev));
     let out: NamedTensor<B, dims![M, N], 2> = add(mat, bias);
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [3, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn add_disjoint_dims() {
         NamedTensor::new(Tensor::from_data([10.0f32, 20.0, 30.0, 40.0, 50.0], &dev));
     let out: NamedTensor<B, dims![M, N], 2> = add(row, col);
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [3, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -76,7 +76,7 @@ fn add_commuted_order() {
         NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0);
     let out: NamedTensor<B, dims![N, M], 2> = add(bias, mat);
     assert_eq!(out.dim_names(), &["N", "M"]);
-    assert_eq!(out.shape().dims, [5, 3]);
+    assert_eq!(out.shape().to_vec(), [5, 3]);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4, "expected mean 3.0, got {mean}");
 }
@@ -98,7 +98,7 @@ fn matmul_2d_standard() {
     ));
     let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
     assert_eq!(c.dim_names(), &["M", "N"]);
-    assert_eq!(c.shape().dims, [3, 5]);
+    assert_eq!(c.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn matmul_2d_k_nonstandard() {
     ));
     let c: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
     assert_eq!(c.dim_names(), &["M", "N"]);
-    assert_eq!(c.shape().dims, [3, 5]);
+    assert_eq!(c.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn matmul_3d_batched() {
     ));
     let out: NamedTensor<B, dims![Batch, M, N], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["Batch", "M", "N"]);
-    assert_eq!(out.shape().dims, [2, 3, 5]);
+    assert_eq!(out.shape().to_vec(), [2, 3, 5]);
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn matmul_3d_k_middle() {
     ));
     let out: NamedTensor<B, dims![M, Batch, N], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["M", "Batch", "N"]);
-    assert_eq!(out.shape().dims, [3, 2, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 2, 5]);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn matmul_mixed_rank() {
     ));
     let out: NamedTensor<B, dims![M, N, Batch], 3> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["M", "N", "Batch"]);
-    assert_eq!(out.shape().dims, [3, 5, 4]);
+    assert_eq!(out.shape().to_vec(), [3, 5, 4]);
 }
 
 #[test]
@@ -203,7 +203,7 @@ fn matmul_multi_contract() {
     ));
     let out: NamedTensor<B, dims![M, N], 2> = matmul(lhs, rhs);
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [2, 5]);
+    assert_eq!(out.shape().to_vec(), [2, 5]);
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn dot_broadcast() {
         NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0], &dev));
     let out: NamedTensor<B, dims![Batch], 1> = dot(mat, bias);
     assert_eq!(out.dim_names(), &["Batch"]);
-    assert_eq!(out.shape().dims, [3]);
+    assert_eq!(out.shape().to_vec(), [3]);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 20.0).abs() < 1e-4, "expected mean 20.0, got {mean}");
 }
@@ -275,7 +275,7 @@ fn dot_partial_contraction() {
     ));
     let out: NamedTensor<B, dims![Batch, Classes], 2> = dot(lhs, rhs);
     assert_eq!(out.dim_names(), &["Batch", "Classes"]);
-    assert_eq!(out.shape().dims, [2, 4]);
+    assert_eq!(out.shape().to_vec(), [2, 4]);
     // row 0 of lhs is [1,0,0], dot with each rhs column → [1,2,3,4]
     // row 1 of lhs is [0,1,0], dot with each rhs column → [1,2,3,4]
     let data: Vec<f32> = out.inner.to_data().to_vec().unwrap();
@@ -298,7 +298,7 @@ fn dot_partial_contraction_reversed_output() {
     // Transposed to (Classes, Batch): [[1,4],[2,5]]
     let out: NamedTensor<B, dims![Classes, Batch], 2> = dot(lhs, rhs);
     assert_eq!(out.dim_names(), &["Classes", "Batch"]);
-    assert_eq!(out.shape().dims, [2, 2]);
+    assert_eq!(out.shape().to_vec(), [2, 2]);
     let data: Vec<f32> = out.inner.to_data().to_vec().unwrap();
     assert_eq!(data, vec![1.0, 4.0, 2.0, 5.0]);
 }
@@ -313,10 +313,10 @@ fn permute_dims() {
         ),
         &dev,
     ));
-    assert_eq!(t.shape().dims, [2, 3, 5]);
+    assert_eq!(t.shape().to_vec(), [2, 3, 5]);
     let t2: NamedTensor<B, dims![N, Batch, M], 3> = permute(t);
     assert_eq!(t2.dim_names(), &["N", "Batch", "M"]);
-    assert_eq!(t2.shape().dims, [5, 2, 3]);
+    assert_eq!(t2.shape().to_vec(), [5, 2, 3]);
 }
 
 #[test]
@@ -326,7 +326,7 @@ fn sum_and_rename() {
         NamedTensor::new(Tensor::ones(Shape::new([4usize, 8]), &dev));
     let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t);
     assert_eq!(s.dim_names(), &["Features"]);
-    assert_eq!(s.shape().dims, [8]);
+    assert_eq!(s.shape().to_vec(), [8]);
     let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
     assert_eq!(h.dim_names(), &["Hidden"]);
 }
@@ -354,7 +354,7 @@ fn mean_reduce() {
     ));
     let m: NamedTensor<B, dims![Features], 1> = t.mean::<dims![SeqLen], _, _, 1>();
     assert_eq!(m.dim_names(), &["Features"]);
-    assert_eq!(m.shape().dims, [4]);
+    assert_eq!(m.shape().to_vec(), [4]);
     let val: f32 = m.inner.mean().into_scalar();
     assert!((val - 4.5).abs() < 1e-4, "expected 4.5, got {val}");
 }
@@ -396,7 +396,7 @@ fn mean_multi_dim_partial() {
     let m: NamedTensor<B, dims![Features], 1> =
         t.mean::<dims![Batch, SeqLen], _, _, 1>();
     assert_eq!(m.dim_names(), &["Features"]);
-    assert_eq!(m.shape().dims, [4]);
+    assert_eq!(m.shape().to_vec(), [4]);
     // mean over Batch and SeqLen for each of the 4 features
     let val: f32 = m.inner.mean().into_scalar();
     assert!((val - 12.5).abs() < 1e-4, "expected 12.5, got {val}");
@@ -439,7 +439,7 @@ fn sub_broadcast() {
         NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out: NamedTensor<B, dims![M, N], 2> = sub(mat, bias);
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [3, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
 }
 
 // ── mul ──
@@ -535,7 +535,7 @@ fn add_operator_broadcast() {
         NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out = mat + bias;
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [3, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -547,7 +547,7 @@ fn sub_operator_broadcast() {
         NamedTensor::new(Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out = mat - bias;
     assert_eq!(out.dim_names(), &["M", "N"]);
-    assert_eq!(out.shape().dims, [3, 5]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
 }
 
 #[test]
@@ -589,7 +589,7 @@ fn untyped_roundtrip() {
 
     let back: NamedTensor<B, dims![M, N], 2> = u.to_named();
     assert_eq!(back.dim_names(), &["M", "N"]);
-    assert_eq!(back.shape().dims, [3, 5]);
+    assert_eq!(back.shape().to_vec(), [3, 5]);
     let mean: f32 = back.inner.mean().into_scalar();
     assert!((mean - 3.0).abs() < 1e-4);
 }
@@ -606,5 +606,5 @@ fn untyped_roundtrip_permuted() {
     let u = a.untyped();
     let back: NamedTensor<B, dims![N, M], 2> = u.to_named();
     assert_eq!(back.dim_names(), &["N", "M"]);
-    assert_eq!(back.shape().dims, [3, 2]);
+    assert_eq!(back.shape().to_vec(), [3, 2]);
 }

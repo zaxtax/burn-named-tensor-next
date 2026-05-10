@@ -1,8 +1,8 @@
-use burn::backend::NdArray;
+use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::{matmul, NamedTensor};
 
-type B = NdArray<f32>;
+type B = Flex<f32>;
 
 fn main() {
     let dev = Default::default();

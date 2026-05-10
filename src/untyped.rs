@@ -50,7 +50,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
             .filter(|n| !contract.contains(n))
             .cloned()
             .collect();
-        let shape = inner.shape().dims;
+        let shape = inner.shape().to_vec();
         let kept: Vec<usize> = self
             .names
             .iter()
@@ -249,8 +249,8 @@ pub fn matmul<
         let kl = axis_of(&ln, k);
         let kr = axis_of(&rn, k);
         assert_eq!(
-            lhs.inner.shape().dims[kl],
-            rhs.inner.shape().dims[kr],
+            lhs.inner.shape().to_vec()[kl],
+            rhs.inner.shape().to_vec()[kr],
             "matmul: K='{k}' size mismatch",
         );
     }
@@ -287,8 +287,8 @@ pub fn matmul<
     let lp = permute_by(lhs.inner, &perm_of(&ln, &lhs_tgt));
     let rp = permute_by(rhs.inner, &perm_of(&rn, &rhs_tgt));
 
-    let lp_shape = lp.shape().dims;
-    let rp_shape = rp.shape().dims;
+    let lp_shape = lp.shape().to_vec();
+    let rp_shape = rp.shape().to_vec();
     let batch_sizes: Vec<usize> = lp_shape[..batch.len()].to_vec();
     let m_sizes: Vec<usize> = lp_shape[batch.len()..batch.len() + m.len()].to_vec();
     let k_sizes: Vec<usize> = lp_shape[batch.len() + m.len()..].to_vec();
@@ -343,8 +343,8 @@ where
         lhs.names[0], rhs.names[0]
     );
     assert_eq!(
-        lhs.inner.shape().dims[0],
-        rhs.inner.shape().dims[0],
+        lhs.inner.shape().to_vec()[0],
+        rhs.inner.shape().to_vec()[0],
         "dot: size mismatch"
     );
     (lhs.inner * rhs.inner).sum().into_scalar().into()

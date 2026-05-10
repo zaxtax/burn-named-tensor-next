@@ -1,9 +1,9 @@
-use burn::backend::NdArray;
+use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::typed::{matmul, NamedTensor};
 use named_tensor::{dim, dims};
 
-type B = NdArray<f32>;
+type B = Flex<f32>;
 
 dim!(Batch, SeqLen, Hidden, Vocab);
 

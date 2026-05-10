@@ -24,12 +24,12 @@ let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(raw_te
 Dimension names are zero-sized marker types. The compiler rejects mismatched dims before your code ever runs:
 
 ```rust
-use burn::backend::NdArray;
+use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::typed::{matmul, NamedTensor};
 use named_tensor::{dim, dims};
 
-type B = NdArray<f32>;
+type B = Flex<f32>;
 
 dim!(Batch, SeqLen, Hidden, Vocab);
 
@@ -57,11 +57,11 @@ let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
 The same operations with `&str` dim names, checked at runtime. Useful when dim names are only known at runtime, or as a gentler on-ramp:
 
 ```rust
-use burn::backend::NdArray;
+use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::{matmul, NamedTensor};
 
-type B = NdArray<f32>;
+type B = Flex<f32>;
 
 let dev = Default::default();
 

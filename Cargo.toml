@@ -8,4 +8,4 @@ name    = "named_tensor"
 path    = "src/lib.rs"
 
 [dependencies]
-burn = { version = "0.20", features = ["ndarray"] }
+burn = { version = "0.21", features = ["flex"] }

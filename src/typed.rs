@@ -504,8 +504,8 @@ where
     }
 
     for &k in &contracted {
-        let l_size = lhs.inner.shape().dims[find_axis(&lhs_names, k)];
-        let r_size = rhs.inner.shape().dims[find_axis(&rhs_names, k)];
+        let l_size = lhs.inner.shape().to_vec()[find_axis(&lhs_names, k)];
+        let r_size = rhs.inner.shape().to_vec()[find_axis(&rhs_names, k)];
         assert_eq!(l_size, r_size, "matmul: contracted dim '{k}' size mismatch");
     }
 
@@ -527,8 +527,8 @@ where
     let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
     let rhs_p = permute_if_needed(rhs.inner, &build_perm(&rhs_names, &rhs_target));
 
-    let lhs_shape = lhs_p.shape().dims;
-    let rhs_shape = rhs_p.shape().dims;
+    let lhs_shape = lhs_p.shape().to_vec();
+    let rhs_shape = rhs_p.shape().to_vec();
     let batch_sizes: Vec<usize> = lhs_shape[..batch.len()].to_vec();
     let m_sizes: Vec<usize> = lhs_shape[batch.len()..batch.len() + m.len()].to_vec();
     let n_sizes: Vec<usize> = rhs_shape[batch.len() + contracted.len()..].to_vec();
@@ -609,8 +609,8 @@ where
 
     // Runtime size check for shared dims
     for &k in &shared {
-        let l_size = lhs.inner.shape().dims[find_axis(&lhs_names, k)];
-        let r_size = rhs.inner.shape().dims[find_axis(&rhs_names, k)];
+        let l_size = lhs.inner.shape().to_vec()[find_axis(&lhs_names, k)];
+        let r_size = rhs.inner.shape().to_vec()[find_axis(&rhs_names, k)];
         assert_eq!(l_size, r_size, "dot: shared dim '{k}' size mismatch");
     }
 
@@ -621,8 +621,8 @@ where
     let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
     let rhs_p = permute_if_needed(rhs.inner, &build_perm(&rhs_names, &rhs_target));
 
-    let lhs_shape = lhs_p.shape().dims;
-    let rhs_shape = rhs_p.shape().dims;
+    let lhs_shape = lhs_p.shape().to_vec();
+    let rhs_shape = rhs_p.shape().to_vec();
 
     let m_sizes: Vec<usize> = lhs_shape[..m.len()].to_vec();
     let n_sizes: Vec<usize> = rhs_shape[shared.len()..].to_vec();
@@ -663,7 +663,7 @@ where
     let axis = find_axis(&S::names(), C::NAME);
     let reduced: Tensor<B, D> = t.inner.sum_dim(axis);
 
-    let red_shape = reduced.shape().dims;
+    let red_shape = reduced.shape().to_vec();
     let out_prod: usize = red_shape.iter().product();
     let out_shape: [usize; D_OUT] = std::array::from_fn(|i| {
         if i < axis {
@@ -694,7 +694,7 @@ where
         let axis = find_axis(&s_names, k);
         inner = inner.mean_dim(axis);
     }
-    let shape = inner.shape().dims;
+    let shape = inner.shape().to_vec();
     let kept: Vec<usize> = s_names
         .iter()
         .enumerate()
