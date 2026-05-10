@@ -9,7 +9,8 @@ The idea of named tensor axes was popularized by [Sasha Rush's "Tensor Considere
 Instead of tracking tensor axes by position (`Tensor<B, 3>` with axis 0 = batch, axis 1 = sequence, etc.), each axis gets a named marker type. The compiler rejects programs that misuse dimensions — no runtime errors, no transposition bugs.
 
 ```rust
-use named_tensor::{dim, dims, NamedTensor};
+use named_tensor::{dim, dims};
+use named_tensor::typed::NamedTensor;
 
 dim!(Batch, SeqLen, Hidden);
 
@@ -49,7 +50,7 @@ let logits: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
 let bias: NamedTensor<B, dims![Vocab], 1> =
     NamedTensor::new(Tensor::zeros(Shape::new([1000]), &dev));
 let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
-    logits + bias;  // broadcasts Vocab into the output
+    logits + bias;
 ```
 
 ### Untyped API — runtime checked
@@ -82,7 +83,26 @@ let bias = NamedTensor::<B, 1>::new(
 let out: NamedTensor<B, 3> = logits + bias;
 ```
 
-The untyped module mirrors the typed surface (`NamedTensor`, `add`, `matmul`, `dot`, `sum`, `permute`, `rename`) but swaps type-level dim markers for string literals.
+### Typed vs. untyped
+
+The two APIs share the same high-level operations, but they are **not**
+interchangeable. Because the untyped module has no type-level dimension
+information, it cannot infer which dims to contract or reduce — those must
+be supplied explicitly at runtime.
+
+| Capability | Typed (`named_tensor::typed`) | Untyped (`named_tensor`) |
+|---|---|---|
+| **Struct** | `NamedTensor<B, S, D>` — dim list `S` is in the type | `NamedTensor<B, D>` — dims stored as strings at runtime |
+| **Import** | `use named_tensor::typed::*;` | Re-exported at crate root (`use named_tensor::*;`) |
+| **`matmul`** | Contracted dims inferred from the return-type annotation | Contracted dim(s) passed explicitly: `matmul(x, w, "Hidden")` |
+| **`dot`** | Arbitrary-rank contraction; return type selects `f32` or `NamedTensor` | Rank-1 only; always returns `f32` |
+| **`sum`** | Reduced dim inferred from return type: `sum::<B, SeqLen, _, _, _, 2, 1>(t)` | Explicit string: `sum(t, "SeqLen")` |
+| **`mean`** | Reduced dims inferred from return type: `t.mean::<dims![SeqLen], _, _, 1>()` | Explicit argument to the method: `t.mean(["SeqLen"])` |
+
+Operator traits (`+`, `-`, `*`, `/`) are available in both modules, but they
+use the **lhs type as the output type** and perform shape alignment at
+runtime. For a true compile-time union check in the typed module, use the
+free functions `add`, `sub`, `mul`, `div` instead.
 
 ## How the type-level machinery works
 
@@ -225,6 +245,7 @@ let s = sum::<B, K, _, _, _, 2, 1>(t);
 | `matmul(lhs, rhs)` | `SL: NameList`, `SR: NameList`, `Ret: IntoNamedResult` | Shared dims not in output are contracted; shared dims in output are batched. Supports multi-dim contraction and `f32` return for full contraction |
 | `dot(a, b)` | `SL: Exclusive<SR, Out>`, `SR: Exclusive<SL, Out>` | All shared dims are contracted; result driven by return type (`f32` or `NamedTensor`) |
 | `sum(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
+| `mean(t)` | `S: RemoveAll<Ks, Output=Out>` | The reduced dims must all exist; output type has them removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
 
 ## How this differs from prior work
