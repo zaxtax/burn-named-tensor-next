@@ -28,7 +28,7 @@ Dimension names are zero-sized marker types. The compiler rejects mismatched dim
 use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::typed::{matmul, NamedTensor};
-use named_tensor::{dim, dims};
+use named_tensor::{dim, dims, s};
 
 type B = Flex<f32>;
 
@@ -51,6 +51,11 @@ let bias: NamedTensor<B, dims![Vocab], 1> =
     NamedTensor::new(Tensor::zeros(Shape::new([1000]), &dev));
 let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
     logits + bias;
+
+// Index by name: slice keeps the dims, isel_by drops one
+let recent = out.clone().slice(s![SeqLen => 5..10]);          // same type, SeqLen now 5
+let first: NamedTensor<B, dims![SeqLen, Vocab], 2> =
+    out.isel_by(Batch, 0);                                    // Batch gone from the type
 ```
 
 ### Untyped API — runtime checked
@@ -60,7 +65,7 @@ The same operations with `&str` dim names, checked at runtime. Useful when dim n
 ```rust
 use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
-use named_tensor::{matmul, NamedTensor};
+use named_tensor::{matmul, s, NamedTensor};
 
 type B = Flex<f32>;
 
@@ -81,6 +86,10 @@ let bias = NamedTensor::<B, 1>::new(
     Tensor::zeros(Shape::new([1000]), &dev),
 );
 let out: NamedTensor<B, 3> = logits + bias;
+
+// Index by name at runtime: slice keeps the dims, isel_by drops one
+let recent = out.clone().slice(s!["SeqLen" => 5..10]);
+let first: NamedTensor<B, 2> = out.isel_by("Batch", 0);
 ```
 
 ### Typed vs. untyped
@@ -98,6 +107,9 @@ be supplied explicitly at runtime.
 | **`dot`** | Arbitrary-rank contraction; return type selects `f32` or `NamedTensor` | Rank-1 only; always returns `f32` |
 | **`sum`** | Reduced dim inferred from return type: `sum::<B, SeqLen, _, _, _, 2, 1>(t)` | Explicit string: `sum(t, "SeqLen")` |
 | **`mean`** | Reduced dims inferred from return type: `t.mean::<dims![SeqLen], _, _, 1>()` | Explicit argument to the method: `t.mean(["SeqLen"])` |
+| **`squeeze`** | Dims to drop named explicitly: `t.squeeze::<dims![Batch], _, _, 2>()`, or one at a time with `t.squeeze_dim(Batch)` | Drops all size-1 dims: `t.squeeze::<2>()`, or one by name: `t.squeeze_dim("Batch")` |
+| **`slice`** | Spec dims compile-checked: `t.slice(s![SeqLen => 5..10])` | String keys, runtime-checked: `t.slice(s!["SeqLen" => 5..10])` |
+| **`isel_by`** | Output dim list computed by `Remove`: `t.isel_by(SeqLen, -1)` | Output rank annotated: `let r: NamedTensor<B, 2> = t.isel_by("SeqLen", -1)` |
 
 Operator traits (`+`, `-`, `*`, `/`) are available in both modules, but they
 use the **lhs type as the output type** and perform shape alignment at
@@ -114,21 +126,23 @@ tensors, string keys make a runtime-checked spec for untyped ones.
 ```rust
 use named_tensor::s;
 
+// x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> with shape [2, 10, 64]
+
 // Typed: every dim in the spec is verified against the tensor's dim list
 // at compile time. SeqLen is axis 1 and Batch axis 0, but the spec doesn't
 // need to know.
-let window = x.slice(s![SeqLen => 5..10, Batch => 0..16]);
+let window = x.slice(s![SeqLen => 5..10, Batch => 0..1]);     // [1, 5, 64]
 
 // Per-dim steps and negative indices, like burn's s!
-let strided = window.slice(s![SeqLen => 0..48;2, Hidden => -8..]);
+let strided = x.slice(s![SeqLen => 0..10;2, Hidden => -8..]); // [2, 5, 8]
 
 // Untyped: string keys, resolved (and panicking on a missing dim) at runtime.
 // Typed specs work on untyped tensors too — but not the other way around.
-let window = u.slice(s!["SeqLen" => 5..10, "Batch" => 0..16]);
+let window = u.slice(s!["SeqLen" => 5..10, "Batch" => 0..1]);
 
 // Specs are plain values: build them anywhere, reuse them across tensors
 // with different dim orders — positions resolve per-tensor at application.
-let spec = s![Batch => 0..8, SeqLen => 5..10];
+let spec = s![Batch => 0..1, SeqLen => 5..10];
 
 // Single-dim method form; s![a..b;step] is a bare extent here
 let head = x.slice_by(SeqLen, s![0..4]);
@@ -137,9 +151,13 @@ let head = x.slice_by(SeqLen, s![0..4]);
 // output dim list; untyped: checked at runtime). Negative = from the end.
 let last: NamedTensor<B, dims![Batch, Hidden], 2> = x.isel_by(SeqLen, -1);
 
-// Write to a named region: assignment aligns `values` by dim name
+// Once a dim is down to size 1, squeeze it out by name
+let flat: NamedTensor<B, dims![SeqLen, Hidden], 2> = window.squeeze_dim(Batch);
+
+// Write to a named region. Typed `values` must have the same dim list;
+// untyped `values` are aligned to the target by dim name first.
 let filled = x.slice_fill(s![SeqLen => 0..1], 0.0);
-let patched = filled.slice_assign(s![Batch => 0..2, SeqLen => 1..3], values);
+let patched = filled.slice_assign(s![Batch => 0..1, SeqLen => 1..3], values);
 ```
 
 Slicing a typed tensor by a dim it doesn't carry fails to compile (via
@@ -245,6 +263,24 @@ let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _,
 // No runtime work — just a type change.
 ```
 
+### 7. `SliceSpec` — slice specs as type-level lists
+
+Indexing reuses the same machinery. The `s!` macro builds slice specs as
+heterogeneous cons lists, mirroring the dim lists themselves:
+
+```rust
+s![M => 0..2, N => 1..]
+// has type: (DimSlice<M>, (DimSlice<N>, ()))
+```
+
+Applying a spec walks the list with the index trick from §3 — each entry
+requires `S: Contains<D, Idx>`, so a spec that names a dim the tensor
+doesn't carry has no valid index and fails to compile. The axis *position*
+is then resolved at runtime by name, which is what lets a single spec value
+slice tensors with different dim orders. Dim-dropping operations
+(`isel_by`, `squeeze_dim`, `squeeze`) compute their output dim lists with
+`Remove`/`RemoveAll` from §4, exactly like `sum` and `mean`.
+
 ## What the compiler catches
 
 ### Mismatched dimensions in element-wise ops
@@ -281,6 +317,19 @@ let t: NamedTensor<B, dims![M, N], 2> = ...;
 let s = sum::<B, K, _, _, _, 2, 1>(t);
 ```
 
+### Slicing by a dim the tensor doesn't have
+
+```rust
+let t: NamedTensor<B, dims![M, N], 2> = ...;
+
+// ERROR: dim `K` is not present in this tensor's dimension list
+let s = t.slice(s![K => 0..1]);
+```
+
+Positional specs are rejected outright — `s![0..2, 1..3]` is a compile
+error telling you to bind each extent to a dim name, so slicing can never
+silently target the wrong axis.
+
 ## Operations and their type-level contracts
 
 | Operation | Constraint | What it means |
@@ -291,6 +340,10 @@ let s = sum::<B, K, _, _, _, 2, 1>(t);
 | `sum(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `mean(t)` | `S: RemoveAll<Ks, Output=Out>` | The reduced dims must all exist; output type has them removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
+| `t.slice(spec)` | per entry: `S: Contains<D>` | Every dim in the spec must exist; rank and dim list unchanged |
+| `t.isel_by(D, i)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Indexed dim must exist; output type has it removed |
+| `t.squeeze_dim(D)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Dim must exist (and be size 1 at runtime); output type has it removed |
+| `t.squeeze::<Ks>()` | `S: RemoveAll<Ks, Output=Out>` | Listed dims must exist (and be size 1 at runtime); output type has them removed |
 
 ## How this differs from prior work
 
