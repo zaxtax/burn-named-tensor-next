@@ -2,8 +2,8 @@
 
 use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor, TensorData};
-use named_tensor::typed::{add, div, dot, matmul, mul, permute, rename, sub, sum, NamedTensor};
-use named_tensor::{dim, dims};
+use named_tensor::typed::{NamedTensor, add, div, dot, matmul, mul, permute, rename, sub, sum};
+use named_tensor::{dim, dims, s};
 
 dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes);
 
@@ -346,10 +346,7 @@ fn sum_to_scalar() {
 fn mean_reduce() {
     let dev = dev();
     let t: NamedTensor<B, dims![SeqLen, Features], 2> = NamedTensor::new(Tensor::from_data(
-        TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            [2usize, 4],
-        ),
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [2usize, 4]),
         &dev,
     ));
     let m: NamedTensor<B, dims![Features], 1> = t.mean::<dims![SeqLen], _, _, 1>();
@@ -372,10 +369,7 @@ fn mean_to_scalar() {
 fn mean_multi_dim() {
     let dev = dev();
     let t: NamedTensor<B, dims![SeqLen, Features], 2> = NamedTensor::new(Tensor::from_data(
-        TensorData::new(
-            vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            [2usize, 4],
-        ),
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [2usize, 4]),
         &dev,
     ));
     let s: f32 = t.mean::<dims![SeqLen, Features], _, _, 0>();
@@ -385,16 +379,14 @@ fn mean_multi_dim() {
 #[test]
 fn mean_multi_dim_partial() {
     let dev = dev();
-    let t: NamedTensor<B, dims![Batch, SeqLen, Features], 3> =
-        NamedTensor::new(Tensor::from_data(
-            TensorData::new(
-                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
-                [2usize, 3, 4],
-            ),
-            &dev,
-        ));
-    let m: NamedTensor<B, dims![Features], 1> =
-        t.mean::<dims![Batch, SeqLen], _, _, 1>();
+    let t: NamedTensor<B, dims![Batch, SeqLen, Features], 3> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+            [2usize, 3, 4],
+        ),
+        &dev,
+    ));
+    let m: NamedTensor<B, dims![Features], 1> = t.mean::<dims![Batch, SeqLen], _, _, 1>();
     assert_eq!(m.dim_names(), &["Features"]);
     assert_eq!(m.shape().to_vec(), [4]);
     // mean over Batch and SeqLen for each of the 4 features
@@ -597,14 +589,135 @@ fn untyped_roundtrip() {
 #[test]
 fn untyped_roundtrip_permuted() {
     let dev = dev();
-    let a: NamedTensor<B, dims![M, N], 2> =
-        NamedTensor::new(Tensor::from_data(
-            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
-            &dev,
-        ));
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
 
     let u = a.untyped();
     let back: NamedTensor<B, dims![N, M], 2> = u.to_named();
     assert_eq!(back.dim_names(), &["N", "M"]);
     assert_eq!(back.shape().to_vec(), [3, 2]);
+}
+
+// ---------- named slicing ----------
+
+fn arange_mn(dev: &burn::prelude::Device<B>) -> NamedTensor<B, dims![M, N], 2> {
+    NamedTensor::new(Tensor::from_data(
+        TensorData::new((0..24).map(|x| x as f32).collect::<Vec<_>>(), [4usize, 6]),
+        dev,
+    ))
+}
+
+#[test]
+fn slice_resolves_dims_by_name_in_any_order() {
+    let t = arange_mn(&dev());
+    let out = t.slice(s![N => 1..3, M => 2..4]);
+    assert_eq!(out.shape().to_vec(), [2, 2]);
+    out.inner
+        .into_data()
+        .assert_eq(&TensorData::from([[13.0f32, 14.0], [19.0, 20.0]]), true);
+}
+
+#[test]
+fn slice_keeps_unmentioned_dims_whole() {
+    let t = arange_mn(&dev());
+    let out = t.slice(s![N => 0..2]);
+    assert_eq!(out.shape().to_vec(), [4, 2]);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+}
+
+#[test]
+fn slice_supports_steps_and_negative_indices() {
+    let t = arange_mn(&dev());
+    let out = t.slice(s![N => 0..6;2, M => -1..]);
+    assert_eq!(out.shape().to_vec(), [1, 3]);
+    out.inner
+        .into_data()
+        .assert_eq(&TensorData::from([[18.0f32, 20.0, 22.0]]), true);
+}
+
+#[test]
+fn slice_spec_is_reusable_across_layouts() {
+    let a = arange_mn(&dev());
+    let b: NamedTensor<B, dims![N, M], 2> = permute(a.clone());
+
+    let spec = s![M => 0..2, N => 0..3];
+    let sa = a.slice(spec.clone());
+    let sb = b.slice(spec);
+
+    // Positions resolved per-tensor: M is axis 0 in `a` but axis 1 in `b`.
+    assert_eq!(sa.shape().to_vec(), [2, 3]);
+    assert_eq!(sb.shape().to_vec(), [3, 2]);
+    let sb_mn: NamedTensor<B, dims![M, N], 2> = permute(sb);
+    sb_mn
+        .inner
+        .into_data()
+        .assert_eq(&sa.inner.into_data(), true);
+}
+
+#[test]
+fn slice_by_slices_a_single_named_dim() {
+    let t = arange_mn(&dev());
+    let out = t.slice_by(N, s![1..4]);
+    assert_eq!(out.shape().to_vec(), [4, 3]);
+}
+
+#[test]
+fn slice_assign_writes_the_named_region() {
+    let dev = dev();
+    let t = arange_mn(&dev);
+    let values: NamedTensor<B, dims![M, N], 2> =
+        NamedTensor::new(Tensor::zeros(Shape::new([2usize, 2]), &dev));
+    let out = t.slice_assign(s![N => 1..3, M => 2..4], values);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([
+            [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0],
+            [6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+            [12.0, 0.0, 0.0, 15.0, 16.0, 17.0],
+            [18.0, 0.0, 0.0, 21.0, 22.0, 23.0],
+        ]),
+        true,
+    );
+}
+
+#[test]
+fn slice_fill_fills_the_named_region() {
+    let t = arange_mn(&dev());
+    let out = t.slice_fill(s![M => 0..1], -1.0);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([
+            [-1.0f32, -1.0, -1.0, -1.0, -1.0, -1.0],
+            [6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+            [12.0, 13.0, 14.0, 15.0, 16.0, 17.0],
+            [18.0, 19.0, 20.0, 21.0, 22.0, 23.0],
+        ]),
+        true,
+    );
+}
+
+#[test]
+fn isel_by_drops_the_named_dim() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(
+            (0..24).map(|x| x as f32).collect::<Vec<_>>(),
+            [2usize, 3, 4],
+        ),
+        &dev,
+    ));
+
+    let out: NamedTensor<B, dims![Batch, Hidden], 2> = t.clone().isel_by(SeqLen, 1);
+    assert_eq!(out.dim_names(), &["Batch", "Hidden"]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[4.0f32, 5.0, 6.0, 7.0], [16.0, 17.0, 18.0, 19.0]]),
+        true,
+    );
+
+    // Negative indices count from the end.
+    let last: NamedTensor<B, dims![Batch, SeqLen], 2> = t.isel_by(Hidden, -1);
+    last.inner.into_data().assert_eq(
+        &TensorData::from([[3.0f32, 7.0, 11.0], [15.0, 19.0, 23.0]]),
+        true,
+    );
 }

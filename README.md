@@ -104,6 +104,50 @@ use the **lhs type as the output type** and perform shape alignment at
 runtime. For a true compile-time union check in the typed module, use the
 free functions `add`, `sub`, `mul`, `div` instead.
 
+### Slicing by name
+
+Tensors are sliced xarray-style with the `s!` macro: dims are addressed by
+name, in any order, and unmentioned dims are kept whole. The same macro
+serves both APIs — dim markers make a compile-checked spec for typed
+tensors, string keys make a runtime-checked spec for untyped ones.
+
+```rust
+use named_tensor::s;
+
+// Typed: every dim in the spec is verified against the tensor's dim list
+// at compile time. SeqLen is axis 1 and Batch axis 0, but the spec doesn't
+// need to know.
+let window = x.slice(s![SeqLen => 5..10, Batch => 0..16]);
+
+// Per-dim steps and negative indices, like burn's s!
+let strided = window.slice(s![SeqLen => 0..48;2, Hidden => -8..]);
+
+// Untyped: string keys, resolved (and panicking on a missing dim) at runtime.
+// Typed specs work on untyped tensors too — but not the other way around.
+let window = u.slice(s!["SeqLen" => 5..10, "Batch" => 0..16]);
+
+// Specs are plain values: build them anywhere, reuse them across tensors
+// with different dim orders — positions resolve per-tensor at application.
+let spec = s![Batch => 0..8, SeqLen => 5..10];
+
+// Single-dim method form; s![a..b;step] is a bare extent here
+let head = x.slice_by(SeqLen, s![0..4]);
+
+// Select one index by name, dropping the dim (typed: `Remove` computes the
+// output dim list; untyped: checked at runtime). Negative = from the end.
+let last: NamedTensor<B, dims![Batch, Hidden], 2> = x.isel_by(SeqLen, -1);
+
+// Write to a named region: assignment aligns `values` by dim name
+let filled = x.slice_fill(s![SeqLen => 0..1], 0.0);
+let patched = filled.slice_assign(s![Batch => 0..2, SeqLen => 1..3], values);
+```
+
+Slicing a typed tensor by a dim it doesn't carry fails to compile (via
+`Contains`, so the error names the missing dim). Positional specs
+(`s![0..16, 5..10]`) are rejected outright: on a named tensor every extent
+is bound to a dim name, so slicing can never silently target the wrong
+axis.
+
 ## How the type-level machinery works
 
 ### 1. Dimension markers via `DimName`

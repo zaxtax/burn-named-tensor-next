@@ -1,9 +1,9 @@
 //! Runtime-checked named tensors — the untyped counterpart to [`crate::typed`].
 
 use burn::prelude::*;
-use burn::tensor::Shape;
+use burn::tensor::{Shape, Slice};
 use std::collections::HashSet;
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Div, Mul, Sub};
 
 pub struct NamedTensor<B: Backend, const D: usize> {
     pub inner: Tensor<B, D>,
@@ -65,9 +65,69 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         NamedTensor::from_parts(to_array(out_names), result)
     }
 
+    /// Returns a view restricted to the extents of a named slice spec built
+    /// with [`s!`](crate::s): dims in any order, unmentioned dims kept whole.
+    /// Both string-keyed (`s!["M" => 0..2]`) and typed (`s![M => 0..2]`)
+    /// specs work; panics if a spec dim is not present.
+    pub fn slice<Spec: crate::slice::UntypedSliceSpec>(self, spec: Spec) -> Self {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        Self::from_parts(self.names, self.inner.slice(&slices))
+    }
+
+    /// Slice along the single dim `dim`, keeping rank. Accepts anything
+    /// convertible to a [`Slice`], including `s![0..24;2]` for stepped
+    /// extents.
+    pub fn slice_by<Sl: Into<Slice>>(self, dim: &str, slice: Sl) -> Self {
+        let axis = axis_of(&self.names, dim);
+        Self::from_parts(self.names, self.inner.slice_dim(axis, slice))
+    }
+
+    /// Assigns `values` to the region selected by a named slice spec and
+    /// returns the updated tensor. `values` is aligned by dim name first, so
+    /// its axes may be in a different order.
+    pub fn slice_assign<Spec: crate::slice::UntypedSliceSpec>(
+        self,
+        spec: Spec,
+        values: NamedTensor<B, D>,
+    ) -> Self {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        let v = permute_by(values.inner, &perm_of(&values.names, &self.names));
+        Self::from_parts(self.names, self.inner.slice_assign(&slices, v))
+    }
+
+    /// Fills the region selected by a named slice spec with `value` and
+    /// returns the updated tensor.
+    pub fn slice_fill<Spec, E>(self, spec: Spec, value: E) -> Self
+    where
+        Spec: crate::slice::UntypedSliceSpec,
+        E: burn::tensor::ElementConversion,
+    {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        Self::from_parts(self.names, self.inner.slice_fill(&slices, value))
+    }
+
+    /// Selects a single index along `dim`, removing that dim from the result
+    /// (xarray's `isel` semantics for integer indexers). Negative indices
+    /// count from the end.
+    pub fn isel_by<const D_OUT: usize>(self, dim: &str, index: isize) -> NamedTensor<B, D_OUT> {
+        assert_eq!(D_OUT + 1, D, "isel_by: D_OUT must equal D-1");
+        let axis = axis_of(&self.names, dim);
+        let mut names = self.names.to_vec();
+        names.remove(axis);
+        NamedTensor::from_parts(
+            to_array(names),
+            self.inner.slice_dim(axis, index).squeeze_dim(axis),
+        )
+    }
+
     /// Convert to a typed [`crate::typed::NamedTensor`], permuting axes to match
     /// the target dim order. Panics if the name sets don't match.
-    pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(self) -> crate::typed::NamedTensor<B, S, D> {
+    pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(
+        self,
+    ) -> crate::typed::NamedTensor<B, S, D> {
         let target = S::names();
         let from: Vec<String> = self.names.to_vec();
         let to: Vec<String> = target.iter().map(|s| s.to_string()).collect();
@@ -121,7 +181,7 @@ impl_op!(Sub, sub, -);
 impl_op!(Mul, mul, *);
 impl_op!(Div, div, /);
 
-fn axis_of(names: &[String], name: &str) -> usize {
+pub(crate) fn axis_of(names: &[String], name: &str) -> usize {
     names
         .iter()
         .position(|n| n == name)
@@ -230,13 +290,7 @@ impl<const N: usize> IntoContract for [&str; N] {
 }
 
 /// Tensor contraction over one or more named dims. Ranks may differ.
-pub fn matmul<
-    B: Backend,
-    C: IntoContract,
-    const DL: usize,
-    const DR: usize,
-    const D_OUT: usize,
->(
+pub fn matmul<B: Backend, C: IntoContract, const DL: usize, const DR: usize, const D_OUT: usize>(
     lhs: NamedTensor<B, DL>,
     rhs: NamedTensor<B, DR>,
     contract: C,
@@ -362,7 +416,6 @@ pub fn sum<B: Backend, const D: usize, const D_OUT: usize>(
     names.remove(axis);
     NamedTensor::from_parts(to_array(names), reduced)
 }
-
 
 /// Permute dims to `new_order`.
 pub fn permute<B: Backend, const D: usize>(

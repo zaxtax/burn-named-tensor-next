@@ -1,8 +1,9 @@
 //! Named-dimension tensors backed by [`burn`] on stable Rust.
 
 use burn::prelude::*;
+use burn::tensor::Slice;
 use std::marker::PhantomData;
-use std::ops::{Add, Sub, Mul, Div};
+use std::ops::{Add, Div, Mul, Sub};
 
 pub trait DimName {
     const NAME: &'static str;
@@ -280,6 +281,72 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         let names: [String; D] = std::array::from_fn(|i| self.names[i].to_string());
         crate::untyped::NamedTensor::from_parts(names, self.inner)
     }
+
+    /// Returns a view restricted to the extents of a named slice spec built
+    /// with [`s!`](crate::s): dims in any order, unmentioned dims kept whole.
+    /// Rank and dim names are unchanged; every dim in the spec is checked at
+    /// compile time.
+    pub fn slice<Spec, Idx>(self, spec: Spec) -> Self
+    where
+        Spec: crate::slice::SliceSpec<S, Idx>,
+    {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        NamedTensor::new(self.inner.slice(&slices))
+    }
+
+    /// Slice along the single dim `dim`, keeping rank. Accepts anything
+    /// convertible to a [`Slice`], including `s![0..24;2]` for stepped
+    /// extents.
+    pub fn slice_by<Dm, I, Sl>(self, _dim: Dm, slice: Sl) -> Self
+    where
+        Dm: DimName,
+        S: Contains<Dm, I>,
+        Sl: Into<Slice>,
+    {
+        let axis = find_axis(&self.names, Dm::NAME);
+        NamedTensor::new(self.inner.slice_dim(axis, slice))
+    }
+
+    /// Assigns `values` to the region selected by a named slice spec and
+    /// returns the updated tensor.
+    pub fn slice_assign<Spec, Idx>(self, spec: Spec, values: Self) -> Self
+    where
+        Spec: crate::slice::SliceSpec<S, Idx>,
+    {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        NamedTensor::new(self.inner.slice_assign(&slices, values.inner))
+    }
+
+    /// Fills the region selected by a named slice spec with `value` and
+    /// returns the updated tensor.
+    pub fn slice_fill<Spec, Idx, E>(self, spec: Spec, value: E) -> Self
+    where
+        Spec: crate::slice::SliceSpec<S, Idx>,
+        E: burn::tensor::ElementConversion,
+    {
+        let mut slices = vec![Slice::full(); D];
+        spec.write(&self.names, &mut slices);
+        NamedTensor::new(self.inner.slice_fill(&slices, value))
+    }
+
+    /// Selects a single index along dim `Dm`, removing that dim from the
+    /// result (xarray's `isel` semantics for integer indexers). Negative
+    /// indices count from the end.
+    pub fn isel_by<Dm, I, Out, const D_OUT: usize>(
+        self,
+        _dim: Dm,
+        index: isize,
+    ) -> NamedTensor<B, Out, D_OUT>
+    where
+        Dm: DimName,
+        S: Contains<Dm, I> + Remove<Dm, I, Output = Out>,
+        Out: NameList + Rank,
+    {
+        let axis = find_axis(&self.names, Dm::NAME);
+        NamedTensor::new(self.inner.slice_dim(axis, index).squeeze_dim(axis))
+    }
 }
 
 impl<B: Backend, S, const D: usize> Clone for NamedTensor<B, S, D>
@@ -510,19 +577,11 @@ where
     }
 
     // lhs → [batch..., m..., contracted...]
-    let lhs_target: Vec<&'static str> = batch
-        .iter()
-        .chain(&m)
-        .chain(&contracted)
-        .copied()
-        .collect();
+    let lhs_target: Vec<&'static str> =
+        batch.iter().chain(&m).chain(&contracted).copied().collect();
     // rhs → [batch..., contracted..., n...]
-    let rhs_target: Vec<&'static str> = batch
-        .iter()
-        .chain(&contracted)
-        .chain(&n)
-        .copied()
-        .collect();
+    let rhs_target: Vec<&'static str> =
+        batch.iter().chain(&contracted).chain(&n).copied().collect();
 
     let lhs_p = permute_if_needed(lhs.inner, &build_perm(&lhs_names, &lhs_target));
     let rhs_p = permute_if_needed(rhs.inner, &build_perm(&rhs_names, &rhs_target));

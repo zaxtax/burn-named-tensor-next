@@ -11,10 +11,7 @@ fn dev() -> burn::prelude::Device<B> {
 #[test]
 fn add_same_shape() {
     let dev = dev();
-    let a = NamedTensor::<B, 2>::new(
-        ["M", "N"],
-        Tensor::ones(Shape::new([3usize, 5]), &dev),
-    );
+    let a = NamedTensor::<B, 2>::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
     let b = NamedTensor::<B, 2>::new(
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
@@ -29,10 +26,7 @@ fn add_same_shape() {
 #[test]
 fn add_with_plus_operator() {
     let dev = dev();
-    let a = NamedTensor::<B, 2>::new(
-        ["M", "N"],
-        Tensor::ones(Shape::new([3usize, 5]), &dev),
-    );
+    let a = NamedTensor::<B, 2>::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
     let b = NamedTensor::<B, 2>::new(
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
@@ -54,10 +48,8 @@ fn add_rank2_rank1_broadcast() {
             &dev,
         ),
     );
-    let bias = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([0.1f32, 0.2, 0.3, 0.4, 0.5], &dev),
-    );
+    let bias =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([0.1f32, 0.2, 0.3, 0.4, 0.5], &dev));
     let out: NamedTensor<B, 2> = untyped::add(mat, bias);
     assert_eq!(out.names(), &["N".to_string(), "M".to_string()]);
     assert_eq!(out.shape().to_vec(), [5, 3]);
@@ -66,10 +58,7 @@ fn add_rank2_rank1_broadcast() {
 #[test]
 fn add_disjoint_dims() {
     let dev = dev();
-    let row = NamedTensor::<B, 1>::new(
-        ["M"],
-        Tensor::from_data([1.0f32, 2.0, 3.0], &dev),
-    );
+    let row = NamedTensor::<B, 1>::new(["M"], Tensor::from_data([1.0f32, 2.0, 3.0], &dev));
     let col = NamedTensor::<B, 1>::new(
         ["N"],
         Tensor::from_data([10.0f32, 20.0, 30.0, 40.0, 50.0], &dev),
@@ -82,10 +71,8 @@ fn add_disjoint_dims() {
 #[test]
 fn add_commuted_order() {
     let dev = dev();
-    let bias = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([1.0f32, 1.0, 1.0, 1.0, 1.0], &dev),
-    );
+    let bias =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([1.0f32, 1.0, 1.0, 1.0, 1.0], &dev));
     let mat = NamedTensor::<B, 2>::new(
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 2.0,
@@ -148,7 +135,10 @@ fn matmul_3d_batched() {
     let lhs = NamedTensor::<B, 3>::new(
         ["Batch", "M", "K"],
         Tensor::from_data(
-            TensorData::new((1..=24).map(|x| x as f32).collect::<Vec<_>>(), [2usize, 3, 4]),
+            TensorData::new(
+                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                [2usize, 3, 4],
+            ),
             &dev,
         ),
     );
@@ -176,7 +166,10 @@ fn matmul_3d_k_middle() {
     let lhs = NamedTensor::<B, 3>::new(
         ["M", "K", "Batch"],
         Tensor::from_data(
-            TensorData::new((1..=24).map(|x| x as f32).collect::<Vec<_>>(), [3usize, 4, 2]),
+            TensorData::new(
+                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                [3usize, 4, 2],
+            ),
             &dev,
         ),
     );
@@ -221,11 +214,7 @@ fn matmul_mixed_rank() {
     let out: NamedTensor<B, 3> = untyped::matmul(lhs, rhs, "K");
     assert_eq!(
         out.names(),
-        &[
-            "M".to_string(),
-            "N".to_string(),
-            "Batch".to_string()
-        ]
+        &["M".to_string(), "N".to_string(), "Batch".to_string()]
     );
     assert_eq!(out.shape().to_vec(), [3, 5, 4]);
 }
@@ -236,7 +225,10 @@ fn matmul_double_contract() {
     let lhs = NamedTensor::<B, 3>::new(
         ["A", "K1", "K2"],
         Tensor::from_data(
-            TensorData::new((1..=24).map(|x| x as f32).collect::<Vec<_>>(), [4usize, 2, 3]),
+            TensorData::new(
+                (1..=24).map(|x| x as f32).collect::<Vec<_>>(),
+                [4usize, 2, 3],
+            ),
             &dev,
         ),
     );
@@ -309,14 +301,9 @@ fn sum_and_rename() {
 #[test]
 fn add_operator_broadcast() {
     let dev = dev();
-    let mat = NamedTensor::<B, 2>::new(
-        ["M", "N"],
-        Tensor::ones(Shape::new([3usize, 5]), &dev),
-    );
-    let bias = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
-    );
+    let mat = NamedTensor::<B, 2>::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
+    let bias =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out = mat + bias;
     assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(out.shape().to_vec(), [3, 5]);
@@ -365,10 +352,8 @@ fn sub_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
     );
-    let bias = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
-    );
+    let bias =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out: NamedTensor<B, 2> = untyped::sub(mat, bias);
     assert_eq!(out.shape().to_vec(), [5, 3]);
 }
@@ -380,10 +365,8 @@ fn sub_operator_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
     );
-    let bias = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev),
-    );
+    let bias =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([1.0f32, 2.0, 3.0, 4.0, 5.0], &dev));
     let out = mat - bias;
     assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(out.shape().to_vec(), [3, 5]);
@@ -432,10 +415,8 @@ fn mul_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 4.0,
     );
-    let scale = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
-    );
+    let scale =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev));
     let out: NamedTensor<B, 2> = untyped::mul(mat, scale);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 8.0).abs() < 1e-4, "expected mean 8.0, got {mean}");
@@ -448,10 +429,8 @@ fn mul_operator_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 4.0,
     );
-    let scale = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
-    );
+    let scale =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev));
     let out = mat * scale;
     assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(out.shape().to_vec(), [3, 5]);
@@ -502,10 +481,8 @@ fn div_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
     );
-    let scale = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
-    );
+    let scale =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev));
     let out: NamedTensor<B, 2> = untyped::div(mat, scale);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 5.0).abs() < 1e-4, "expected mean 5.0, got {mean}");
@@ -517,10 +494,7 @@ fn mean_reduce() {
     let t = NamedTensor::<B, 2>::new(
         ["SeqLen", "Features"],
         Tensor::from_data(
-            TensorData::new(
-                vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-                [2usize, 4],
-            ),
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], [2usize, 4]),
             &dev,
         ),
     );
@@ -580,13 +554,102 @@ fn div_operator_broadcast() {
         ["M", "N"],
         Tensor::ones(Shape::new([3usize, 5]), &dev) * 10.0,
     );
-    let scale = NamedTensor::<B, 1>::new(
-        ["N"],
-        Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev),
-    );
+    let scale =
+        NamedTensor::<B, 1>::new(["N"], Tensor::from_data([2.0f32, 2.0, 2.0, 2.0, 2.0], &dev));
     let out = mat / scale;
     assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
     assert_eq!(out.shape().to_vec(), [3, 5]);
     let mean: f32 = out.inner.mean().into_scalar();
     assert!((mean - 5.0).abs() < 1e-4, "expected mean 5.0, got {mean}");
+}
+
+// ---------- named slicing ----------
+
+fn arange_mn(dev: &burn::prelude::Device<B>) -> NamedTensor<B, 2> {
+    NamedTensor::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new((0..24).map(|x| x as f32).collect::<Vec<_>>(), [4usize, 6]),
+            dev,
+        ),
+    )
+}
+
+#[test]
+fn slice_with_string_keys() {
+    let t = arange_mn(&dev());
+    let out = t.slice(untyped::s!["N" => 1..3, "M" => 2..4]);
+    assert_eq!(out.shape().to_vec(), [2, 2]);
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    out.inner
+        .into_data()
+        .assert_eq(&TensorData::from([[13.0f32, 14.0], [19.0, 20.0]]), true);
+}
+
+#[test]
+fn slice_keeps_unmentioned_dims_and_supports_steps() {
+    let t = arange_mn(&dev());
+    let out = t.slice(untyped::s!["N" => 0..6;2]);
+    assert_eq!(out.shape().to_vec(), [4, 3]);
+}
+
+#[test]
+fn slice_by_single_dim() {
+    let t = arange_mn(&dev());
+    let out = t.slice_by("N", untyped::s![1..4]);
+    assert_eq!(out.shape().to_vec(), [4, 3]);
+}
+
+#[test]
+fn slice_assign_aligns_values_by_name() {
+    let dev = dev();
+    let t = arange_mn(&dev);
+    // Values arrive with axes in the opposite order; alignment is by name.
+    let values = NamedTensor::<B, 2>::new(
+        ["N", "M"],
+        Tensor::zeros(burn::tensor::Shape::new([2usize, 2]), &dev),
+    );
+    let out = t.slice_assign(untyped::s!["N" => 1..3, "M" => 2..4], values);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([
+            [0.0f32, 1.0, 2.0, 3.0, 4.0, 5.0],
+            [6.0, 7.0, 8.0, 9.0, 10.0, 11.0],
+            [12.0, 0.0, 0.0, 15.0, 16.0, 17.0],
+            [18.0, 0.0, 0.0, 21.0, 22.0, 23.0],
+        ]),
+        true,
+    );
+}
+
+#[test]
+fn slice_fill_fills_the_named_region() {
+    let t = arange_mn(&dev());
+    let out = t.slice_fill(untyped::s!["M" => 0..1], -1.0);
+    let first_row: Vec<f32> = out
+        .inner
+        .into_data()
+        .to_vec()
+        .unwrap()
+        .into_iter()
+        .take(6)
+        .collect();
+    assert_eq!(first_row, vec![-1.0f32; 6]);
+}
+
+#[test]
+fn isel_by_drops_the_named_dim() {
+    let t = arange_mn(&dev());
+    let out: NamedTensor<B, 1> = t.isel_by("M", -1);
+    assert_eq!(out.names(), &["N".to_string()]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([18.0f32, 19.0, 20.0, 21.0, 22.0, 23.0]),
+        true,
+    );
+}
+
+#[test]
+#[should_panic(expected = "not found")]
+fn slice_with_unknown_dim_panics() {
+    let t = arange_mn(&dev());
+    let _ = t.slice(untyped::s!["Z" => 0..1]);
 }
