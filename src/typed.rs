@@ -347,6 +347,37 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         let axis = find_axis(&self.names, Dm::NAME);
         NamedTensor::new(self.inner.slice_dim(axis, index).squeeze_dim(axis))
     }
+
+    /// Removes dim `Dm` from the tensor. Panics if its size is not 1; use
+    /// [`isel_by`](Self::isel_by) to pick an index along a larger dim.
+    pub fn squeeze_dim<Dm, I, Out, const D_OUT: usize>(self, _dim: Dm) -> NamedTensor<B, Out, D_OUT>
+    where
+        Dm: DimName,
+        S: Contains<Dm, I> + Remove<Dm, I, Output = Out>,
+        Out: NameList + Rank,
+    {
+        let axis = find_axis(&self.names, Dm::NAME);
+        NamedTensor::new(self.inner.squeeze_dim(axis))
+    }
+
+    /// Removes the dims listed in `Ks`, e.g. `t.squeeze::<dims![M, K], _, _, 1>()`.
+    /// Panics if any of them has a size other than 1.
+    ///
+    /// Unlike burn's `squeeze`, the dims to drop are named explicitly rather
+    /// than inferred from runtime sizes: which dims disappear must be known
+    /// at compile time, since they are removed from the type.
+    pub fn squeeze<Ks, Out, Idx, const D_OUT: usize>(self) -> NamedTensor<B, Out, D_OUT>
+    where
+        Ks: NameList,
+        S: RemoveAll<Ks, Idx, Output = Out>,
+        Out: NameList + Rank,
+    {
+        let axes: Vec<isize> = Ks::names()
+            .iter()
+            .map(|k| find_axis(&self.names, k) as isize)
+            .collect();
+        NamedTensor::new(self.inner.squeeze_dims(&axes))
+    }
 }
 
 impl<B: Backend, S, const D: usize> Clone for NamedTensor<B, S, D>

@@ -721,3 +721,34 @@ fn isel_by_drops_the_named_dim() {
         true,
     );
 }
+
+// ---------- squeeze ----------
+
+#[test]
+fn squeeze_dim_removes_a_unit_dim() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![Batch, M, N], 3> =
+        NamedTensor::new(Tensor::ones(Shape::new([1usize, 3, 5]), &dev));
+    let out: NamedTensor<B, dims![M, N], 2> = t.squeeze_dim(Batch);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
+}
+
+#[test]
+#[should_panic(expected = "size is not 1")]
+fn squeeze_dim_panics_on_non_unit_dim() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> =
+        NamedTensor::new(Tensor::ones(Shape::new([3usize, 5]), &dev));
+    let _: NamedTensor<B, dims![N], 1> = t.squeeze_dim(M);
+}
+
+#[test]
+fn squeeze_removes_the_listed_dims() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![Batch, M, K, N], 4> =
+        NamedTensor::new(Tensor::ones(Shape::new([1usize, 3, 1, 5]), &dev));
+    let out: NamedTensor<B, dims![M, N], 2> = t.squeeze::<dims![Batch, K], _, _, 2>();
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
+}

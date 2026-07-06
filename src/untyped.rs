@@ -123,6 +123,38 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         )
     }
 
+    /// Removes `dim` from the tensor. Panics if it is missing or its size is
+    /// not 1; use [`isel_by`](Self::isel_by) to pick an index along a larger
+    /// dim.
+    pub fn squeeze_dim<const D_OUT: usize>(self, dim: &str) -> NamedTensor<B, D_OUT> {
+        assert_eq!(D_OUT + 1, D, "squeeze_dim: D_OUT must equal D-1");
+        let axis = axis_of(&self.names, dim);
+        let mut names = self.names.to_vec();
+        names.remove(axis);
+        NamedTensor::from_parts(to_array(names), self.inner.squeeze_dim(axis))
+    }
+
+    /// Removes every dim of size 1, like burn's `squeeze`. Panics if the
+    /// number of remaining dims doesn't match `D_OUT`.
+    pub fn squeeze<const D_OUT: usize>(self) -> NamedTensor<B, D_OUT> {
+        let shape = self.inner.shape().to_vec();
+        let names: Vec<String> = self
+            .names
+            .iter()
+            .zip(&shape)
+            .filter(|(_, size)| **size != 1)
+            .map(|(n, _)| n.clone())
+            .collect();
+        assert_eq!(
+            names.len(),
+            D_OUT,
+            "squeeze: {} dims of size > 1 in {:?}, expected D_OUT={D_OUT}",
+            names.len(),
+            self.names,
+        );
+        NamedTensor::from_parts(to_array(names), self.inner.squeeze())
+    }
+
     /// Convert to a typed [`crate::typed::NamedTensor`], permuting axes to match
     /// the target dim order. Panics if the name sets don't match.
     pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(

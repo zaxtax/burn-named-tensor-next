@@ -653,3 +653,38 @@ fn slice_with_unknown_dim_panics() {
     let t = arange_mn(&dev());
     let _ = t.slice(untyped::s!["Z" => 0..1]);
 }
+
+// ---------- squeeze ----------
+
+#[test]
+fn squeeze_dim_removes_a_unit_dim() {
+    let dev = dev();
+    let t = NamedTensor::<B, 3>::new(
+        ["Batch", "M", "N"],
+        Tensor::ones(Shape::new([1usize, 3, 5]), &dev),
+    );
+    let out: NamedTensor<B, 2> = t.squeeze_dim("Batch");
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
+}
+
+#[test]
+fn squeeze_removes_all_unit_dims() {
+    let dev = dev();
+    let t = NamedTensor::<B, 4>::new(
+        ["Batch", "M", "K", "N"],
+        Tensor::ones(Shape::new([1usize, 3, 1, 5]), &dev),
+    );
+    let out: NamedTensor<B, 2> = t.squeeze();
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [3, 5]);
+}
+
+#[test]
+#[should_panic(expected = "expected D_OUT")]
+fn squeeze_panics_on_rank_mismatch() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
+    // No unit dims, so squeezing to rank 1 is a runtime error.
+    let _: NamedTensor<B, 1> = t.squeeze();
+}
