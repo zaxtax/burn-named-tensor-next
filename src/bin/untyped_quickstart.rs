@@ -22,8 +22,15 @@ fn main() {
 
     // Index by name at runtime: slice keeps the dims, isel_by drops one
     let recent = out.clone().slice(s!["SeqLen" => 5..10]);
-    let first: NamedTensor<B, 2> = out.isel_by("Batch", 0);
+    let head = out.clone().slice_by("SeqLen", 0..4);
+    let first: NamedTensor<B, 2> = out.clone().isel_by("Batch", 0);
+
+    // Write to named regions; slice_assign aligns `values` axes by dim name
+    let masked = out.slice_fill(s!["SeqLen" => 5..10], 0.0);
+    let patched = masked.slice_assign(s!["SeqLen" => 5..10], recent.clone());
 
     println!("dims: {:?}, shape: {:?}", recent.names(), recent.shape());
+    println!("dims: {:?}, shape: {:?}", head.names(), head.shape());
     println!("dims: {:?}, shape: {:?}", first.names(), first.shape());
+    println!("dims: {:?}, shape: {:?}", patched.names(), patched.shape());
 }

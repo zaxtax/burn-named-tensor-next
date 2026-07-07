@@ -26,12 +26,23 @@ fn main() {
 
     // Index by name: slice keeps the dims, isel_by drops one
     let recent = out.clone().slice(s![SeqLen => 5..10]);
-    let first: NamedTensor<B, dims![SeqLen, Vocab], 2> = out.isel_by(Batch, 0);
+    let head = out.clone().slice_by(SeqLen, 0..4);
+    let first: NamedTensor<B, dims![SeqLen, Vocab], 2> = out.clone().isel_by(Batch, 0);
+
+    // Write to named regions: fill with a scalar, or assign another tensor
+    let masked = out.slice_fill(s![SeqLen => 5..10], 0.0);
+    let patched = masked.slice_assign(s![SeqLen => 5..10], recent.clone());
 
     println!(
         "dims: {:?}, shape: {:?}",
         recent.dim_names(),
         recent.shape()
     );
+    println!("dims: {:?}, shape: {:?}", head.dim_names(), head.shape());
     println!("dims: {:?}, shape: {:?}", first.dim_names(), first.shape());
+    println!(
+        "dims: {:?}, shape: {:?}",
+        patched.dim_names(),
+        patched.shape()
+    );
 }

@@ -54,8 +54,13 @@ let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
 
 // Index by name: slice keeps the dims, isel_by drops one
 let recent = out.clone().slice(s![SeqLen => 5..10]);          // same type, SeqLen now 5
+let head = out.clone().slice_by(SeqLen, 0..4);                // single-dim shorthand
 let first: NamedTensor<B, dims![SeqLen, Vocab], 2> =
-    out.isel_by(Batch, 0);                                    // Batch gone from the type
+    out.clone().isel_by(Batch, 0);                            // Batch gone from the type
+
+// Write to named regions: fill with a scalar, or assign another tensor
+let masked = out.slice_fill(s![SeqLen => 5..10], 0.0);
+let patched = masked.slice_assign(s![SeqLen => 5..10], recent);
 ```
 
 ### Untyped API — runtime checked
@@ -89,7 +94,12 @@ let out: NamedTensor<B, 3> = logits + bias;
 
 // Index by name at runtime: slice keeps the dims, isel_by drops one
 let recent = out.clone().slice(s!["SeqLen" => 5..10]);
-let first: NamedTensor<B, 2> = out.isel_by("Batch", 0);
+let head = out.clone().slice_by("SeqLen", 0..4);
+let first: NamedTensor<B, 2> = out.clone().isel_by("Batch", 0);
+
+// Write to named regions; slice_assign aligns `values` axes by dim name
+let masked = out.slice_fill(s!["SeqLen" => 5..10], 0.0);
+let patched = masked.slice_assign(s!["SeqLen" => 5..10], recent);
 ```
 
 ### Typed vs. untyped
@@ -115,56 +125,6 @@ Operator traits (`+`, `-`, `*`, `/`) are available in both modules, but they
 use the **lhs type as the output type** and perform shape alignment at
 runtime. For a true compile-time union check in the typed module, use the
 free functions `add`, `sub`, `mul`, `div` instead.
-
-### Slicing by name
-
-Tensors are sliced xarray-style with the `s!` macro: dims are addressed by
-name, in any order, and unmentioned dims are kept whole. The same macro
-serves both APIs — dim markers make a compile-checked spec for typed
-tensors, string keys make a runtime-checked spec for untyped ones.
-
-```rust
-use named_tensor::s;
-
-// x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> with shape [2, 10, 64]
-
-// Typed: every dim in the spec is verified against the tensor's dim list
-// at compile time. SeqLen is axis 1 and Batch axis 0, but the spec doesn't
-// need to know.
-let window = x.slice(s![SeqLen => 5..10, Batch => 0..1]);     // [1, 5, 64]
-
-// Per-dim steps and negative indices, like burn's s!
-let strided = x.slice(s![SeqLen => 0..10;2, Hidden => -8..]); // [2, 5, 8]
-
-// Untyped: string keys, resolved (and panicking on a missing dim) at runtime.
-// Typed specs work on untyped tensors too — but not the other way around.
-let window = u.slice(s!["SeqLen" => 5..10, "Batch" => 0..1]);
-
-// Specs are plain values: build them anywhere, reuse them across tensors
-// with different dim orders — positions resolve per-tensor at application.
-let spec = s![Batch => 0..1, SeqLen => 5..10];
-
-// Single-dim method form; s![a..b;step] is a bare extent here
-let head = x.slice_by(SeqLen, s![0..4]);
-
-// Select one index by name, dropping the dim (typed: `Remove` computes the
-// output dim list; untyped: checked at runtime). Negative = from the end.
-let last: NamedTensor<B, dims![Batch, Hidden], 2> = x.isel_by(SeqLen, -1);
-
-// Once a dim is down to size 1, squeeze it out by name
-let flat: NamedTensor<B, dims![SeqLen, Hidden], 2> = window.squeeze_dim(Batch);
-
-// Write to a named region. Typed `values` must have the same dim list;
-// untyped `values` are aligned to the target by dim name first.
-let filled = x.slice_fill(s![SeqLen => 0..1], 0.0);
-let patched = filled.slice_assign(s![Batch => 0..1, SeqLen => 1..3], values);
-```
-
-Slicing a typed tensor by a dim it doesn't carry fails to compile (via
-`Contains`, so the error names the missing dim). Positional specs
-(`s![0..16, 5..10]`) are rejected outright: on a named tensor every extent
-is bound to a dim name, so slicing can never silently target the wrong
-axis.
 
 ## How the type-level machinery works
 
@@ -344,6 +304,10 @@ silently target the wrong axis.
 | `t.isel_by(D, i)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Indexed dim must exist; output type has it removed |
 | `t.squeeze_dim(D)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Dim must exist (and be size 1 at runtime); output type has it removed |
 | `t.squeeze::<Ks>()` | `S: RemoveAll<Ks, Output=Out>` | Listed dims must exist (and be size 1 at runtime); output type has them removed |
+
+Slice specs are name-bound by construction: positional specs like
+`s![0..16, 5..10]` are rejected at compile time, so a slice can never
+silently target the wrong axis.
 
 ## How this differs from prior work
 
