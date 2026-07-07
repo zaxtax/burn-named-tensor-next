@@ -2,7 +2,7 @@
 
 Type-level [named tensors](https://nlp.seas.harvard.edu/NamedTensor) for Rust, built on [burn](https://github.com/tracel-ai/burn). Dimension names are zero-sized marker types, and all constraints — which dims a tensor carries, how operations combine them, which dim to contract over — are enforced **at compile time** through trait bounds on type-level lists.
 
-The idea of named tensor axes was popularized by [Sasha Rush's "Tensor Considered Harmful"](https://nlp.seas.harvard.edu/NamedTensor) (2019) and has appeared in [PyTorch named tensors](https://pytorch.org/docs/stable/named_tensor.html), [tsensor](https://github.com/parrt/tensor-sensor), and Haskell's [Naperian functors](https://www.cs.ox.ac.uk/people/jeremy.gibbons/publications/aplicative.pdf). This crate takes the approach furthest: dimension constraints are checked entirely by the Rust type system, with zero runtime overhead for the naming layer itself.
+The idea of named tensor axes was popularized by [Sasha Rush's "Tensor Considered Harmful"](https://nlp.seas.harvard.edu/NamedTensor) (2019) and has appeared in [PyTorch named tensors](https://pytorch.org/docs/stable/named_tensor.html), [tsensor](https://github.com/parrt/tensor-sensor), and Haskell's [Naperian functors](https://www.cs.ox.ac.uk/people/jeremy.gibbons/publications/aplicative.pdf). This crate takes the approach even further: dimension constraints are checked entirely by the Rust type system, with zero runtime overhead for the naming layer itself.
 
 ## Core idea
 
