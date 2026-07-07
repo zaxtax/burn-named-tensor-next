@@ -52,11 +52,11 @@ let bias: NamedTensor<B, dims![Vocab], 1> =
 let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
     logits + bias;
 
-// Index by name: slice keeps the dims, isel_by drops one
+// Index by name: slice keeps the dims, squeeze drops a size-1 dim
 let recent = out.clone().slice(s![SeqLen => 5..10]);          // same type, SeqLen now 5
 let head = out.clone().slice_by(SeqLen, 0..4);                // single-dim shorthand
 let first: NamedTensor<B, dims![SeqLen, Vocab], 2> =
-    out.clone().isel_by(Batch, 0);                            // Batch gone from the type
+    out.clone().slice_by(Batch, 0..1).squeeze_dim(Batch);     // Batch gone from the type
 
 // Write to named regions: fill with a scalar, or assign another tensor
 let masked = out.slice_fill(s![SeqLen => 5..10], 0.0);
@@ -92,10 +92,10 @@ let bias = NamedTensor::<B, 1>::new(
 );
 let out: NamedTensor<B, 3> = logits + bias;
 
-// Index by name at runtime: slice keeps the dims, isel_by drops one
+// Index by name at runtime: slice keeps the dims, squeeze drops a size-1 dim
 let recent = out.clone().slice(s!["SeqLen" => 5..10]);
 let head = out.clone().slice_by("SeqLen", 0..4);
-let first: NamedTensor<B, 2> = out.clone().isel_by("Batch", 0);
+let first: NamedTensor<B, 2> = out.clone().slice_by("Batch", 0..1).squeeze();
 
 // Write to named regions; slice_assign aligns `values` axes by dim name
 let masked = out.slice_fill(s!["SeqLen" => 5..10], 0.0);
