@@ -10,21 +10,10 @@ pub use burn::tensor::Slice;
 
 /// A slice bound to a compile-time dim name; which axis it applies to is
 /// decided only when the spec meets a tensor.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct DimSlice<D> {
     pub(crate) slice: Slice,
     _dim: PhantomData<D>,
-}
-
-// Manual impl: dim markers don't derive `Clone`, and the phantom doesn't
-// need them to.
-impl<D> Clone for DimSlice<D> {
-    fn clone(&self) -> Self {
-        Self {
-            slice: self.slice,
-            _dim: PhantomData,
-        }
-    }
 }
 
 impl<D: DimName> DimSlice<D> {
