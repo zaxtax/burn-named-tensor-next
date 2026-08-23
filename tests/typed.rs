@@ -30,6 +30,21 @@ fn add_same_shape() {
 }
 
 #[test]
+fn from_data_and_from_floats() {
+    let dev = dev();
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    );
+    let b: NamedTensor<B, dims![M, N], 2> =
+        NamedTensor::from_floats(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2], &dev);
+    assert_eq!(a.dim_names(), &["M", "N"]);
+    assert_eq!(b.dim_names(), &["M", "N"]);
+    assert_eq!(a.shape().to_vec(), [2, 2]);
+    a.inner.into_data().assert_eq(&b.inner.into_data(), true);
+}
+
+#[test]
 fn add_with_plus_operator() {
     let dev = dev();
     let a: NamedTensor<B, dims![M, N], 2> =
@@ -602,8 +617,6 @@ fn untyped_roundtrip_permuted() {
     assert_eq!(back.shape().to_vec(), [3, 2]);
 }
 
-// ---------- named slicing ----------
-
 fn arange_mn(dev: &burn::prelude::Device<B>) -> NamedTensor<B, dims![M, N], 2> {
     NamedTensor::new(Tensor::from_data(
         TensorData::new((0..24).map(|x| x as f32).collect::<Vec<_>>(), [4usize, 6]),
@@ -724,8 +737,6 @@ fn isel_by_drops_the_named_dim() {
     );
 }
 
-// ---------- concat / stack ----------
-
 #[test]
 fn concat_along_named_dim() {
     let dev = dev();
@@ -809,8 +820,6 @@ fn stack_then_isel_roundtrips() {
         .into_data()
         .assert_eq(&a.inner.into_data(), true);
 }
-
-// ---------- squeeze ----------
 
 #[test]
 fn squeeze_dim_removes_a_unit_dim() {

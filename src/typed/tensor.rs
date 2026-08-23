@@ -1,5 +1,5 @@
 use burn::prelude::*;
-use burn::tensor::{Slice, activation};
+use burn::tensor::{Element, Slice, activation};
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Sub};
 
@@ -21,6 +21,22 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
             _s: PhantomData,
         }
     }
+
+    /// Build from raw data, mirroring [`Tensor::from_data`]. Dim names come
+    /// from the type `S`.
+    pub fn from_data<T: Into<TensorData>>(data: T, device: &B::Device) -> Self {
+        Self::new(Tensor::from_data(data, device))
+    }
+
+    /// Build from a flat `Vec` of elements and a shape.
+    pub fn from_floats<E: Element>(
+        data: Vec<E>,
+        shape: impl Into<Shape>,
+        device: &B::Device,
+    ) -> Self {
+        Self::new(Tensor::from_data(TensorData::new(data, shape), device))
+    }
+
     pub fn into_inner(self) -> Tensor<B, D> {
         self.inner
     }

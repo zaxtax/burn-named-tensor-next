@@ -1,5 +1,5 @@
 use burn::prelude::*;
-use burn::tensor::{Shape, Slice, activation};
+use burn::tensor::{Element, Shape, Slice, activation};
 use std::ops::{Add, Div, Mul, Sub};
 
 use super::ops::{align, axis_of, perm_of, permute_by, to_array};
@@ -19,6 +19,22 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn from_parts(names: [String; D], inner: Tensor<B, D>) -> Self {
         Self { inner, names }
     }
+
+    /// Build from raw data, mirroring [`Tensor::from_data`].
+    pub fn from_data<T: Into<TensorData>>(names: [&str; D], data: T, device: &B::Device) -> Self {
+        Self::new(names, Tensor::from_data(data, device))
+    }
+
+    /// Build from a flat `Vec` of elements and a shape.
+    pub fn from_floats<E: Element>(
+        names: [&str; D],
+        data: Vec<E>,
+        shape: impl Into<Shape>,
+        device: &B::Device,
+    ) -> Self {
+        Self::new(names, Tensor::from_data(TensorData::new(data, shape), device))
+    }
+
     pub fn into_inner(self) -> Tensor<B, D> {
         self.inner
     }

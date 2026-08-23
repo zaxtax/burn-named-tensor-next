@@ -24,6 +24,22 @@ fn add_same_shape() {
 }
 
 #[test]
+fn from_data_and_from_floats() {
+    let dev = dev();
+    let a: NamedTensor<B, 2> = NamedTensor::from_data(
+        ["M", "N"],
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    );
+    let b: NamedTensor<B, 2> =
+        NamedTensor::from_floats(["M", "N"], vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2], &dev);
+    assert_eq!(a.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(b.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(a.shape().to_vec(), [2, 2]);
+    a.inner.into_data().assert_eq(&b.inner.into_data(), true);
+}
+
+#[test]
 fn add_with_plus_operator() {
     let dev = dev();
     let a = NamedTensor::<B, 2>::new(["M", "N"], Tensor::ones(Shape::new([3usize, 5]), &dev));
@@ -563,8 +579,6 @@ fn div_operator_broadcast() {
     assert!((mean - 5.0).abs() < 1e-4, "expected mean 5.0, got {mean}");
 }
 
-// ---------- named slicing ----------
-
 fn arange_mn(dev: &burn::prelude::Device<B>) -> NamedTensor<B, 2> {
     NamedTensor::new(
         ["M", "N"],
@@ -654,8 +668,6 @@ fn slice_with_unknown_dim_panics() {
     let _ = t.slice(untyped::s!["Z" => 0..1]);
 }
 
-// ---------- concat / stack ----------
-
 #[test]
 fn concat_along_named_dim() {
     let dev = dev();
@@ -737,8 +749,6 @@ fn stack_prepends_a_new_named_dim() {
         true,
     );
 }
-
-// ---------- squeeze ----------
 
 #[test]
 fn squeeze_dim_removes_a_unit_dim() {
