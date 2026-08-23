@@ -1,5 +1,5 @@
 use burn::prelude::*;
-use burn::tensor::{activation, Shape, Slice};
+use burn::tensor::{Shape, Slice, activation};
 use std::ops::{Add, Div, Mul, Sub};
 
 use super::ops::{align, axis_of, perm_of, permute_by, to_array};

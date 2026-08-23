@@ -654,6 +654,90 @@ fn slice_with_unknown_dim_panics() {
     let _ = t.slice(untyped::s!["Z" => 0..1]);
 }
 
+// ---------- concat / stack ----------
+
+#[test]
+fn concat_along_named_dim() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 2> = untyped::concat(vec![a, b], "M");
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [4, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]),
+        true,
+    );
+}
+
+#[test]
+fn concat_aligns_differing_axis_orders() {
+    let dev = dev();
+    // `a` is (M, N), `b` is (N, M) — concat aligns by name first.
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["N", "M"],
+        Tensor::from_data(
+            TensorData::new(vec![5.0f32, 7.0, 6.0, 8.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 2> = untyped::concat(vec![a, b], "M");
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [4, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]),
+        true,
+    );
+}
+
+#[test]
+fn stack_prepends_a_new_named_dim() {
+    let dev = dev();
+    let a = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let b = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 3> = untyped::stack::<B, 2, 3>(vec![a, b], "Layer");
+    assert_eq!(
+        out.names(),
+        &["Layer".to_string(), "M".to_string(), "N".to_string()]
+    );
+    assert_eq!(out.shape().to_vec(), [2, 2, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[[1.0f32, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]),
+        true,
+    );
+}
+
 // ---------- squeeze ----------
 
 #[test]

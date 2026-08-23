@@ -1,5 +1,5 @@
 use burn::prelude::*;
-use burn::tensor::{activation, Slice};
+use burn::tensor::{Slice, activation};
 use std::marker::PhantomData;
 use std::ops::{Add, Div, Mul, Sub};
 

@@ -324,3 +324,44 @@ pub fn rename<B: Backend, const D: usize>(
     t.names[axis] = new.to_string();
     t
 }
+
+/// Concatenate tensors along the existing dim `dim`. All inputs must share
+/// the same dim *set*; each is permuted to the first tensor's order before
+/// concatenation, so differing axis orders are tolerated. The output keeps
+/// the first tensor's dim order.
+///
+/// Panics if `tensors` is empty, if a tensor is missing a dim, or if any
+/// non-concat dim has mismatched sizes across inputs.
+pub fn concat<B: Backend, const D: usize>(
+    tensors: Vec<NamedTensor<B, D>>,
+    dim: &str,
+) -> NamedTensor<B, D> {
+    let target = tensors[0].names.clone();
+    let axis = axis_of(&target, dim);
+    let inners: Vec<Tensor<B, D>> = tensors
+        .into_iter()
+        .map(|t| permute_by(t.inner, &perm_of(&t.names, &target)))
+        .collect();
+    NamedTensor::from_parts(target, Tensor::cat(inners, axis))
+}
+
+/// Stack tensors along a *new* dim `dim`, prepended to the front of the dim
+/// list. All inputs must share the same dim *set*; each is permuted to the
+/// first tensor's order first. `D_OUT` must equal `D + 1`.
+///
+/// Panics if `tensors` is empty, if a tensor is missing a dim, or if the
+/// inputs' shapes differ.
+pub fn stack<B: Backend, const D: usize, const D_OUT: usize>(
+    tensors: Vec<NamedTensor<B, D>>,
+    dim: &str,
+) -> NamedTensor<B, D_OUT> {
+    debug_assert_eq!(D_OUT, D + 1, "stack: D_OUT must equal D + 1");
+    let target = tensors[0].names.clone();
+    let inners: Vec<Tensor<B, D>> = tensors
+        .into_iter()
+        .map(|t| permute_by(t.inner, &perm_of(&t.names, &target)))
+        .collect();
+    let mut names = vec![dim.to_string()];
+    names.extend(target);
+    NamedTensor::from_parts(to_array(names), Tensor::stack::<D_OUT>(inners, 0))
+}

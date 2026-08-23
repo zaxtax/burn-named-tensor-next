@@ -2,10 +2,12 @@
 
 use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor, TensorData};
-use named_tensor::typed::{NamedTensor, add, div, dot, matmul, mul, permute, rename, sub, sum};
+use named_tensor::typed::{
+    NamedTensor, add, concat, div, dot, matmul, mul, permute, rename, stack, sub, sum,
+};
 use named_tensor::{dim, dims, s};
 
-dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes);
+dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes, Layer);
 
 type B = Flex<f32>;
 
@@ -324,7 +326,7 @@ fn sum_and_rename() {
     let dev = dev();
     let t: NamedTensor<B, dims![SeqLen, Features], 2> =
         NamedTensor::new(Tensor::ones(Shape::new([4usize, 8]), &dev));
-    let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t);
+    let s: NamedTensor<B, dims![Features], 1> = sum::<B, dims![SeqLen], _, _, _, 2, 1>(t);
     assert_eq!(s.dim_names(), &["Features"]);
     assert_eq!(s.shape().to_vec(), [8]);
     let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
@@ -336,9 +338,9 @@ fn sum_to_scalar() {
     let dev = dev();
     let t: NamedTensor<B, dims![SeqLen, Features], 2> =
         NamedTensor::new(Tensor::ones(Shape::new([4usize, 8]), &dev));
-    let s: NamedTensor<B, dims![Features], 1> = sum::<B, SeqLen, _, _, _, 2, 1>(t);
+    let s: NamedTensor<B, dims![Features], 1> = sum::<B, dims![SeqLen], _, _, _, 2, 1>(t);
     let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
-    let total: f32 = sum::<B, Hidden, _, _, _, 1, 0>(h);
+    let total: f32 = sum::<B, dims![Hidden], _, _, _, 1, 0>(h);
     assert!((total - 32.0).abs() < 1e-4, "expected 32.0, got {total}");
 }
 
@@ -720,6 +722,92 @@ fn isel_by_drops_the_named_dim() {
         &TensorData::from([[3.0f32, 7.0, 11.0], [15.0, 19.0, 23.0]]),
         true,
     );
+}
+
+// ---------- concat / stack ----------
+
+#[test]
+fn concat_along_named_dim() {
+    let dev = dev();
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    ));
+    let b: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+        &dev,
+    ));
+    // concat along M (axis 0): rows stack
+    let out: NamedTensor<B, dims![M, N], 2> = concat(vec![a, b], M);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [4, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 2.0], [3.0, 4.0], [5.0, 6.0], [7.0, 8.0]]),
+        true,
+    );
+}
+
+#[test]
+fn concat_along_second_named_dim() {
+    let dev = dev();
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    ));
+    let b: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+        &dev,
+    ));
+    // concat along N (axis 1): columns stack
+    let out: NamedTensor<B, dims![M, N], 2> = concat(vec![a, b], N);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [2, 4]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 2.0, 5.0, 6.0], [3.0, 4.0, 7.0, 8.0]]),
+        true,
+    );
+}
+
+#[test]
+fn stack_prepends_a_new_named_dim() {
+    let dev = dev();
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    ));
+    let b: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+        &dev,
+    ));
+    // stack along a new dim `Layer` → dims![Layer, M, N]
+    let out: NamedTensor<B, dims![Layer, M, N], 3> = stack::<B, _, Layer, 2, 3>(vec![a, b], Layer);
+    assert_eq!(out.dim_names(), &["Layer", "M", "N"]);
+    assert_eq!(out.shape().to_vec(), [2, 2, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[[1.0f32, 2.0], [3.0, 4.0]], [[5.0, 6.0], [7.0, 8.0]]]),
+        true,
+    );
+}
+
+#[test]
+fn stack_then_isel_roundtrips() {
+    let dev = dev();
+    let a: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0], [2usize, 2]),
+        &dev,
+    ));
+    let b: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![5.0f32, 6.0, 7.0, 8.0], [2usize, 2]),
+        &dev,
+    ));
+    let stacked: NamedTensor<B, dims![Layer, M, N], 3> =
+        stack::<B, _, Layer, 2, 3>(vec![a.clone(), b], Layer);
+    // isel_by(Layer, 0) recovers the first input
+    let first: NamedTensor<B, dims![M, N], 2> = stacked.isel_by(Layer, 0);
+    first
+        .inner
+        .into_data()
+        .assert_eq(&a.inner.into_data(), true);
 }
 
 // ---------- squeeze ----------

@@ -387,6 +387,51 @@ where
     NamedTensor::new(permute_if_needed(t.inner, &perm))
 }
 
+/// Concatenate tensors along the existing dim `Dm`. All inputs share the
+/// same dim list `S` (and thus the same axis order), so no alignment is
+/// needed — the dim to grow is named, eliminating the positional `dim=`
+/// foot-gun. The output has the same dim list `S`; the concat dim's size is
+/// the sum of the inputs' sizes along it.
+///
+/// Panics if `tensors` is empty, or if any non-concat dim has mismatched
+/// sizes across inputs.
+pub fn concat<B, S, Dm, I, const D: usize>(
+    tensors: Vec<NamedTensor<B, S, D>>,
+    _dim: Dm,
+) -> NamedTensor<B, S, D>
+where
+    B: Backend,
+    Dm: DimName,
+    S: NameList + Rank + Contains<Dm, I>,
+{
+    let axis = find_axis(&S::names(), Dm::NAME);
+    let inners: Vec<Tensor<B, D>> = tensors.into_iter().map(|t| t.inner).collect();
+    NamedTensor::new(Tensor::cat(inners, axis))
+}
+
+/// Stack tensors along a *new* dim `New`, prepended to the front of the dim
+/// list. All inputs share the same dim list `S`; the output is
+/// `DCons<New, S>` — the new dim gets a semantic name, unlike positional
+/// `stack` where it is an anonymous axis 0.
+///
+/// `D_OUT` must equal `D + 1` (the new dim adds one rank). To place the new
+/// dim elsewhere, `permute` the result.
+///
+/// Panics if `tensors` is empty, or if the inputs' shapes differ.
+pub fn stack<B, S, New, const D: usize, const D_OUT: usize>(
+    tensors: Vec<NamedTensor<B, S, D>>,
+    _dim: New,
+) -> NamedTensor<B, DCons<New, S>, D_OUT>
+where
+    B: Backend,
+    New: DimName,
+    S: NameList + Rank,
+{
+    debug_assert_eq!(D_OUT, D + 1, "stack: D_OUT must equal D + 1");
+    let inners: Vec<Tensor<B, D>> = tensors.into_iter().map(|t| t.inner).collect();
+    NamedTensor::new(Tensor::stack::<D_OUT>(inners, 0))
+}
+
 /// Rename dim `Old` to `New` — zero cost.
 pub fn rename<B, Old, New, Out, S, Idx, const D: usize>(
     t: NamedTensor<B, S, D>,
