@@ -290,6 +290,18 @@ Positional specs are rejected outright — `s![0..2, 1..3]` is a compile
 error telling you to bind each extent to a dim name, so slicing can never
 silently target the wrong axis.
 
+### Aligning to a target that drops a dim
+
+```rust
+let t: NamedTensor<B, dims![M, N], 2> = ...;
+
+// ERROR: dims![M, N] is not a subset of dims![N, K] — `M` is missing
+let out: NamedTensor<B, dims![N, K], 2> = align_to(t);
+```
+
+`align_to` / `align_as` can only permute and add size-1 dims, never drop one;
+the `Subset` bound rejects any target that omits a source dim at compile time.
+
 ## Operations and their type-level contracts
 
 | Operation | Constraint | What it means |
@@ -300,6 +312,8 @@ silently target the wrong axis.
 | `sum(t)` | `S: Contains<C>`, `S: Remove<C, Output=Out>` | The summed dim must exist; output type has it removed |
 | `mean(t)` | `S: RemoveAll<Ks, Output=Out>` | The reduced dims must all exist; output type has them removed |
 | `rename(t)` | `S: Contains<Old>`, `S: ReplaceFirst<Old, New, Output=Out>` | Old dim must exist; output type has it swapped |
+| `align_to(t)` | `S: Subset<Out>` | Every dim of `t` must be in the target `Out`; extra target dims become size-1 (named `unsqueeze` + `permute`) |
+| `align_as(t, other)` | `S: Subset<SR>` | Align `t` to `other`'s dim list; extra dims become size-1 |
 | `t.slice(spec)` | per entry: `S: Contains<D>` | Every dim in the spec must exist; rank and dim list unchanged |
 | `t.isel_by(D, i)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Indexed dim must exist; output type has it removed |
 | `t.squeeze_dim(D)` | `S: Contains<D>`, `S: Remove<D, Output=Out>` | Dim must exist (and be size 1 at runtime); output type has it removed |

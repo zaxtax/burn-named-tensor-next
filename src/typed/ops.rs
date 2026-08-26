@@ -79,8 +79,8 @@ macro_rules! def_binop {
             SR: NameList + Rank,
         {
             let out_names = Out::names();
-            let l = align_to(lhs.inner, &lhs.names, &out_names);
-            let r = align_to(rhs.inner, &rhs.names, &out_names);
+            let l = align_to_impl(lhs.inner, &lhs.names, &out_names);
+            let r = align_to_impl(rhs.inner, &rhs.names, &out_names);
             NamedTensor::new(l $op r)
         }
     };
@@ -385,6 +385,49 @@ where
     let to = Out::names();
     let perm = build_perm(&from, &to);
     NamedTensor::new(permute_if_needed(t.inner, &perm))
+}
+
+/// Align `t` to the target dim list `Out`, permuting axes and adding size-1
+/// dims for any target dim not present in `t`.
+///
+/// Every dim of `t` must appear in `Out` (checked at compile time via
+/// [`Subset`]); `Out` may contain extra dims, which become size-1. This is the
+/// named-tensor analogue of `unsqueeze` + `permute` (and, once the new dims are
+/// expanded, `broadcast_to`): you name the *target* dim list and the operation
+/// inserts/permutes to match it.
+///
+/// ```text
+/// t:    dims![M, N]      shape [3, 5]
+/// Out:  dims![N, H, M]   → shape [5, 1, 3]  (H added as size-1)
+/// ```
+pub fn align_to<B, Out, S, Idx, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<B, S, D>,
+) -> NamedTensor<B, Out, D_OUT>
+where
+    B: Backend,
+    S: Subset<Out, Idx> + NameList + Rank,
+    Out: NameList + Rank,
+{
+    let target = Out::names();
+    let inner = align_to_impl(t.inner, &t.names, &target);
+    NamedTensor::new(inner)
+}
+
+/// Align `t` to the dim list of `other`, permuting axes and adding size-1 dims
+/// for any of `other`'s dims not present in `t`. Equivalent to
+/// `align_to::<SR>()` where `SR` is `other`'s dim list.
+///
+/// `other` is borrowed only for its type; its data is not read.
+pub fn align_as<B, S, SR, Idx, const D: usize, const DR: usize>(
+    t: NamedTensor<B, S, D>,
+    _other: &NamedTensor<B, SR, DR>,
+) -> NamedTensor<B, SR, DR>
+where
+    B: Backend,
+    S: Subset<SR, Idx> + NameList + Rank,
+    SR: NameList + Rank,
+{
+    align_to::<B, SR, S, Idx, D, DR>(t)
 }
 
 /// Concatenate tensors along the existing dim `Dm`. All inputs share the

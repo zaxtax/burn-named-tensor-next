@@ -173,6 +173,24 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         NamedTensor::from_parts(to_array(names), self.inner.squeeze())
     }
 
+    /// Align to the target dim list `target`, permuting axes and adding size-1
+    /// dims for any target dim not present in `self`. Every dim of `self` must
+    /// appear in `target`; `target` may contain extra dims.
+    ///
+    /// Panics if a dim of `self` is missing from `target`.
+    pub fn align_to<const D_OUT: usize>(self, target: [&str; D_OUT]) -> NamedTensor<B, D_OUT> {
+        super::ops::align_to::<B, D, D_OUT>(self, target)
+    }
+
+    /// Align to the dim list of `other`, permuting axes and adding size-1 dims
+    /// for any of `other`'s dims not present in `self`. `other` is borrowed only
+    /// for its names.
+    ///
+    /// Panics if a dim of `self` is missing from `other`.
+    pub fn align_as<const DR: usize>(self, other: &NamedTensor<B, DR>) -> NamedTensor<B, DR> {
+        super::ops::align_as::<B, D, DR>(self, other)
+    }
+
     /// Convert to a typed [`crate::typed::NamedTensor`], permuting axes to match
     /// the target dim order. Panics if the name sets don't match.
     pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(

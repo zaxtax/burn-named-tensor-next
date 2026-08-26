@@ -215,7 +215,7 @@ pub(crate) fn permute_if_needed<B: Backend, const D: usize>(
     t.permute(arr)
 }
 
-pub(crate) fn align_to<B: Backend, const D_IN: usize, const D_OUT: usize>(
+pub(crate) fn align_to_impl<B: Backend, const D_IN: usize, const D_OUT: usize>(
     t: Tensor<B, D_IN>,
     operand_names: &[&'static str],
     target_names: &[&'static str],

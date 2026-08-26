@@ -3,11 +3,12 @@
 use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor, TensorData};
 use named_tensor::typed::{
-    NamedTensor, add, concat, div, dot, matmul, mul, permute, rename, stack, sub, sum,
+    NamedTensor, add, align_as, align_to, concat, div, dot, matmul, mul, permute, rename, stack,
+    sub, sum,
 };
 use named_tensor::{dim, dims, s};
 
-dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes, Layer);
+dim!(Batch, M, K, K2, N, Features, SeqLen, Hidden, Classes, Layer, H);
 
 type B = Flex<f32>;
 
@@ -848,4 +849,164 @@ fn squeeze_removes_the_listed_dims() {
     let out: NamedTensor<B, dims![M, N], 2> = t.squeeze::<dims![Batch, K], _, _, 2>();
     assert_eq!(out.dim_names(), &["M", "N"]);
     assert_eq!(out.shape().to_vec(), [3, 5]);
+}
+
+// ── align_to / align_as ──
+
+#[test]
+fn align_to_adds_size1_dims() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // Insert a new dim `K` in the middle: dims![M, K, N]
+    let out: NamedTensor<B, dims![M, K, N], 3> = align_to(t);
+    assert_eq!(out.dim_names(), &["M", "K", "N"]);
+    assert_eq!(out.shape().to_vec(), [2, 1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 1, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_permutes() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // Reorder to dims![N, M]
+    let out: NamedTensor<B, dims![N, M], 2> = align_to(t);
+    assert_eq!(out.dim_names(), &["N", "M"]);
+    assert_eq!(out.shape().to_vec(), [3, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], [3usize, 2]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_method_form() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    let out: NamedTensor<B, dims![N, K, M], 3> = t.align_to();
+    assert_eq!(out.dim_names(), &["N", "K", "M"]);
+    assert_eq!(out.shape().to_vec(), [3, 1, 2]);
+}
+
+#[test]
+fn align_as_matches_other() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    let other: NamedTensor<B, dims![N, K, M], 3> =
+        NamedTensor::new(Tensor::ones(Shape::new([3usize, 1, 2]), &dev));
+    let out: NamedTensor<B, dims![N, K, M], 3> = align_as(t, &other);
+    assert_eq!(out.dim_names(), &["N", "K", "M"]);
+    assert_eq!(out.shape().to_vec(), [3, 1, 2]);
+}
+
+#[test]
+fn align_as_method_form() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    let other: NamedTensor<B, dims![N, K, M], 3> =
+        NamedTensor::new(Tensor::ones(Shape::new([3usize, 1, 2]), &dev));
+    let out: NamedTensor<B, dims![N, K, M], 3> = t.align_as(&other);
+    assert_eq!(out.dim_names(), &["N", "K", "M"]);
+    assert_eq!(out.shape().to_vec(), [3, 1, 2]);
+}
+
+#[test]
+fn align_to_identity_is_noop() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // Target equals source: no permute, no insert.
+    let out: NamedTensor<B, dims![M, N], 2> = align_to(t);
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_prepends_new_dim() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // New dim `K` at the front.
+    let out: NamedTensor<B, dims![K, M, N], 3> = align_to(t);
+    assert_eq!(out.dim_names(), &["K", "M", "N"]);
+    assert_eq!(out.shape().to_vec(), [1, 2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [1usize, 2, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_adds_multiple_dims() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // Two new dims, one at the front and one in the middle.
+    let out: NamedTensor<B, dims![K, M, H, N], 4> = align_to(t);
+    assert_eq!(out.dim_names(), &["K", "M", "H", "N"]);
+    assert_eq!(out.shape().to_vec(), [1, 2, 1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [1usize, 2, 1, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_as_verifies_data() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    let other: NamedTensor<B, dims![N, K, M], 3> =
+        NamedTensor::new(Tensor::ones(Shape::new([3usize, 1, 2]), &dev));
+    // Combined permute (M,N → N,M) + insert (K): flat data is the transpose.
+    let out: NamedTensor<B, dims![N, K, M], 3> = align_as(t, &other);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], [3usize, 1, 2]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_rank1() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M], 1> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0], [3usize]),
+        &dev,
+    ));
+    let out: NamedTensor<B, dims![K, M], 2> = align_to(t);
+    assert_eq!(out.dim_names(), &["K", "M"]);
+    assert_eq!(out.shape().to_vec(), [1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0], [1usize, 3]),
+        true,
+    );
 }

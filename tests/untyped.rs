@@ -782,3 +782,207 @@ fn squeeze_panics_on_rank_mismatch() {
     // No unit dims, so squeezing to rank 1 is a runtime error.
     let _: NamedTensor<B, 1> = t.squeeze();
 }
+
+// ── align_to / align_as ──
+
+#[test]
+fn align_to_adds_size1_dims() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 3> = untyped::align_to(t, ["M", "K", "N"]);
+    assert_eq!(
+        out.names(),
+        &["M".to_string(), "K".to_string(), "N".to_string()]
+    );
+    assert_eq!(out.shape().to_vec(), [2, 1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 1, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_permutes() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 2> = untyped::align_to(t, ["N", "M"]);
+    assert_eq!(out.names(), &["N".to_string(), "M".to_string()]);
+    assert_eq!(out.shape().to_vec(), [3, 2]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], [3usize, 2]),
+        true,
+    );
+}
+
+#[test]
+fn align_as_matches_other() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let other = NamedTensor::<B, 3>::new(
+        ["N", "K", "M"],
+        Tensor::ones(Shape::new([3usize, 1, 2]), &dev),
+    );
+    let out: NamedTensor<B, 3> = untyped::align_as(t, &other);
+    assert_eq!(
+        out.names(),
+        &["N".to_string(), "K".to_string(), "M".to_string()]
+    );
+    assert_eq!(out.shape().to_vec(), [3, 1, 2]);
+}
+
+#[test]
+fn align_as_method_form() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let other = NamedTensor::<B, 3>::new(
+        ["N", "K", "M"],
+        Tensor::ones(Shape::new([3usize, 1, 2]), &dev),
+    );
+    let out: NamedTensor<B, 3> = t.align_as(&other);
+    assert_eq!(
+        out.names(),
+        &["N".to_string(), "K".to_string(), "M".to_string()]
+    );
+    assert_eq!(out.shape().to_vec(), [3, 1, 2]);
+}
+
+#[test]
+#[should_panic(expected = "not in target")]
+fn align_to_panics_on_missing_dim() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::ones(Shape::new([2usize, 3]), &dev),
+    );
+    // `M` is missing from the target
+    let _: NamedTensor<B, 2> = untyped::align_to(t, ["N", "K"]);
+}
+
+#[test]
+fn align_to_identity_is_noop() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 2> = untyped::align_to(t, ["M", "N"]);
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_prepends_new_dim() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 3> = untyped::align_to(t, ["K", "M", "N"]);
+    assert_eq!(
+        out.names(),
+        &["K".to_string(), "M".to_string(), "N".to_string()]
+    );
+    assert_eq!(out.shape().to_vec(), [1, 2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [1usize, 2, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_adds_multiple_dims() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let out: NamedTensor<B, 4> = untyped::align_to(t, ["K", "M", "H", "N"]);
+    assert_eq!(
+        out.names(),
+        &[
+            "K".to_string(),
+            "M".to_string(),
+            "H".to_string(),
+            "N".to_string()
+        ]
+    );
+    assert_eq!(out.shape().to_vec(), [1, 2, 1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [1usize, 2, 1, 3]),
+        true,
+    );
+}
+
+#[test]
+fn align_as_verifies_data() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    let other = NamedTensor::<B, 3>::new(
+        ["N", "K", "M"],
+        Tensor::ones(Shape::new([3usize, 1, 2]), &dev),
+    );
+    let out: NamedTensor<B, 3> = untyped::align_as(t, &other);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 4.0, 2.0, 5.0, 3.0, 6.0], [3usize, 1, 2]),
+        true,
+    );
+}
+
+#[test]
+fn align_to_rank1() {
+    let dev = dev();
+    let t = NamedTensor::<B, 1>::new(
+        ["M"],
+        Tensor::from_data(TensorData::new(vec![1.0f32, 2.0, 3.0], [3usize]), &dev),
+    );
+    let out: NamedTensor<B, 2> = untyped::align_to(t, ["K", "M"]);
+    assert_eq!(out.names(), &["K".to_string(), "M".to_string()]);
+    assert_eq!(out.shape().to_vec(), [1, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::new(vec![1.0f32, 2.0, 3.0], [1usize, 3]),
+        true,
+    );
+}

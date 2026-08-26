@@ -314,6 +314,40 @@ pub fn permute<B: Backend, const D: usize>(
     NamedTensor::from_parts(to_array(to), inner)
 }
 
+/// Align `t` to the target dim list `target`, permuting axes and adding size-1
+/// dims for any target dim not present in `t`. Every dim of `t` must appear in
+/// `target`; `target` may contain extra dims, which become size-1.
+///
+/// Panics if a dim of `t` is missing from `target`.
+pub fn align_to<B: Backend, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<B, D>,
+    target: [&str; D_OUT],
+) -> NamedTensor<B, D_OUT> {
+    let from = t.names.to_vec();
+    let to: Vec<String> = target.iter().map(|s| s.to_string()).collect();
+    for n in &from {
+        assert!(
+            to.contains(n),
+            "align_to: dim '{n}' is not in target {to:?}",
+        );
+    }
+    let inner = align::<B, D, D_OUT>(t.inner, &from, &to);
+    NamedTensor::from_parts(to_array(to), inner)
+}
+
+/// Align `t` to the dim list of `other`, permuting axes and adding size-1 dims
+/// for any of `other`'s dims not present in `t`. Equivalent to
+/// `align_to(t, &other.names)`. `other` is borrowed only for its names.
+///
+/// Panics if a dim of `t` is missing from `other`.
+pub fn align_as<B: Backend, const D: usize, const DR: usize>(
+    t: NamedTensor<B, D>,
+    other: &NamedTensor<B, DR>,
+) -> NamedTensor<B, DR> {
+    let target: [&str; DR] = std::array::from_fn(|i| other.names[i].as_str());
+    align_to::<B, D, DR>(t, target)
+}
+
 /// Rename dim `old` to `new`.
 pub fn rename<B: Backend, const D: usize>(
     mut t: NamedTensor<B, D>,

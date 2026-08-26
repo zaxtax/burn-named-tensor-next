@@ -163,6 +163,35 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         NamedTensor::new(self.inner.squeeze_dims(&axes))
     }
 
+    /// Align to the target dim list `Out`, permuting axes and adding size-1
+    /// dims for any target dim not present in `self`. Every dim of `self` must
+    /// appear in `Out` (checked at compile time); `Out` may contain extra dims.
+    ///
+    /// ```ignore
+    /// let y: NamedTensor<B, dims![N, H, M], 3> = x.align_to();
+    /// ```
+    pub fn align_to<Out, Idx, const D_OUT: usize>(self) -> NamedTensor<B, Out, D_OUT>
+    where
+        S: Subset<Out, Idx> + NameList + Rank,
+        Out: NameList + Rank,
+    {
+        super::ops::align_to::<B, Out, S, Idx, D, D_OUT>(self)
+    }
+
+    /// Align to the dim list of `other`, permuting axes and adding size-1 dims
+    /// for any of `other`'s dims not present in `self`. `other` is borrowed only
+    /// for its type.
+    pub fn align_as<SR, Idx, const DR: usize>(
+        self,
+        other: &NamedTensor<B, SR, DR>,
+    ) -> NamedTensor<B, SR, DR>
+    where
+        S: Subset<SR, Idx> + NameList + Rank,
+        SR: NameList + Rank,
+    {
+        super::ops::align_as::<B, S, SR, Idx, D, DR>(self, other)
+    }
+
     // ── Unary ops ──
 
     /// Element-wise rectified linear unit: `max(0, x)`.
@@ -348,7 +377,7 @@ macro_rules! impl_op {
             type Output = NamedTensor<B, SL, DL>;
 
             fn $method(self, rhs: NamedTensor<B, SR, DR>) -> Self::Output {
-                let r = align_to(rhs.inner, &rhs.names, &self.names);
+                let r = align_to_impl(rhs.inner, &rhs.names, &self.names);
                 NamedTensor::new(self.inner $op r)
             }
         }
