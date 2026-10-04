@@ -331,6 +331,16 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         let axis = find_axis(&self.names, Dm::NAME);
         NamedTensor::new(self.inner.flip([axis as isize]))
     }
+
+    /// Cumulative sum along the named dim `Dm`, keeping rank and dim list.
+    pub fn cumsum<Dm, I>(self, _dim: Dm) -> Self
+    where
+        Dm: DimName,
+        S: Contains<Dm, I>,
+    {
+        let axis = find_axis(&self.names, Dm::NAME);
+        NamedTensor::new(self.inner.cumsum(axis))
+    }
 }
 
 impl<B: Backend, S, const D: usize> Clone for NamedTensor<B, S, D>

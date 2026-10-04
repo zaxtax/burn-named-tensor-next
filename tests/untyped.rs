@@ -986,3 +986,23 @@ fn align_to_rank1() {
         true,
     );
 }
+
+#[test]
+fn cumsum_along_named_dim() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    // cumsum along N (axis 1): running total within each row
+    let out = t.cumsum("N");
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 3.0, 6.0], [4.0, 9.0, 15.0]]),
+        true,
+    );
+}

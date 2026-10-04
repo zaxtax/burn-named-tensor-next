@@ -330,6 +330,12 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         let axis = axis_of(&self.names, dim);
         Self::from_parts(self.names, self.inner.flip([axis as isize]))
     }
+
+    /// Cumulative sum along the named dim `dim`, keeping rank and dim list.
+    pub fn cumsum(self, dim: &str) -> Self {
+        let axis = axis_of(&self.names, dim);
+        Self::from_parts(self.names, self.inner.cumsum(axis))
+    }
 }
 
 impl<B: Backend, const D: usize> Clone for NamedTensor<B, D> {
