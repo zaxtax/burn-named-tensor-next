@@ -1019,11 +1019,28 @@ fn cumsum_along_named_dim() {
         &dev,
     ));
     // cumsum along N (axis 1): running total within each row
-    let out = t.cumsum(N);
+    let out = t.cumsum::<dims![N], _>();
     assert_eq!(out.dim_names(), &["M", "N"]);
     assert_eq!(out.shape().to_vec(), [2, 3]);
     out.inner.into_data().assert_eq(
         &TensorData::from([[1.0f32, 3.0, 6.0], [4.0, 9.0, 15.0]]),
+        true,
+    );
+}
+
+#[test]
+fn cumsum_prefix_sum() {
+    let dev = dev();
+    let t: NamedTensor<B, dims![M, N], 2> = NamedTensor::new(Tensor::from_data(
+        TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+        &dev,
+    ));
+    // prefix sum over both M and N: corner sums
+    let out = t.cumsum::<dims![M, N], _>();
+    assert_eq!(out.dim_names(), &["M", "N"]);
+    assert_eq!(out.shape().to_vec(), [2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 3.0, 6.0], [5.0, 12.0, 21.0]]),
         true,
     );
 }

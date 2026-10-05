@@ -332,8 +332,30 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         NamedTensor::new(self.inner.flip([axis as isize]))
     }
 
-    /// Cumulative sum along the named dim `Dm`, keeping rank and dim list.
-    pub fn cumsum<Dm, I>(self, _dim: Dm) -> Self
+    /// Cumulative sum over the named dims in `Ks`, keeping rank and dim list.
+    /// Over a single dim this is a running sum; over several it is the
+    /// N-dimensional prefix sum (the "corner" sum — order-independent because
+    /// cumsum is linear), mirroring xarray's `cumsum(dim=[...])`.
+    ///
+    /// ```ignore
+    /// let a: NamedTensor<B, dims![N], 1>    = t.cumsum::<dims![N], _>();
+    /// let b: NamedTensor<B, dims![M, N], 2> = t.cumsum::<dims![M, N], _>();
+    /// ```
+    pub fn cumsum<Ks, Idx>(self) -> Self
+    where
+        Ks: NameList,
+        Ks: Subset<S, Idx>,
+    {
+        let mut inner = self.inner;
+        for k in Ks::names() {
+            inner = inner.cumsum(find_axis(&self.names, k));
+        }
+        NamedTensor::new(inner)
+    }
+
+    /// Private single-dim variant of [`cumsum`], kept for call sites that
+    /// hold a concrete dim marker `Dm` rather than a dim list.
+    fn cumsum_dim<Dm, I>(self, _dim: Dm) -> Self
     where
         Dm: DimName,
         S: Contains<Dm, I>,

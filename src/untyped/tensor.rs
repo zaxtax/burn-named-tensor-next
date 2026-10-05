@@ -331,10 +331,20 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         Self::from_parts(self.names, self.inner.flip([axis as isize]))
     }
 
-    /// Cumulative sum along the named dim `dim`, keeping rank and dim list.
-    pub fn cumsum(self, dim: &str) -> Self {
-        let axis = axis_of(&self.names, dim);
-        Self::from_parts(self.names, self.inner.cumsum(axis))
+    /// Cumulative sum over `dims`, keeping rank and dim list. Accepts a single
+    /// dim (`"N"`) or a list (`["M", "N"]`) via [`IntoContract`]: over
+    /// multiple dims this is the N-dimensional prefix sum (the "corner" sum,
+    /// order-independent because cumsum is linear), mirroring xarray's
+    /// `cumsum(dim=[...])`.
+    ///
+    /// [`IntoContract`]: super::ops::IntoContract
+    pub fn cumsum<C: super::ops::IntoContract>(self, dims: C) -> Self {
+        let mut inner = self.inner;
+        for d in dims.into_contract() {
+            let axis = axis_of(&self.names, &d);
+            inner = inner.cumsum(axis);
+        }
+        Self::from_parts(self.names, inner)
     }
 }
 

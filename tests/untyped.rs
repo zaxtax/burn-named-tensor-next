@@ -1006,3 +1006,23 @@ fn cumsum_along_named_dim() {
         true,
     );
 }
+
+#[test]
+fn cumsum_prefix_sum() {
+    let dev = dev();
+    let t = NamedTensor::<B, 2>::new(
+        ["M", "N"],
+        Tensor::from_data(
+            TensorData::new(vec![1.0f32, 2.0, 3.0, 4.0, 5.0, 6.0], [2usize, 3]),
+            &dev,
+        ),
+    );
+    // prefix sum over both M and N: corner sums
+    let out = t.cumsum(["M", "N"]);
+    assert_eq!(out.names(), &["M".to_string(), "N".to_string()]);
+    assert_eq!(out.shape().to_vec(), [2, 3]);
+    out.inner.into_data().assert_eq(
+        &TensorData::from([[1.0f32, 3.0, 6.0], [5.0, 12.0, 21.0]]),
+        true,
+    );
+}
