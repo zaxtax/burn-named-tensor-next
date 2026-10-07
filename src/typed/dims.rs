@@ -204,10 +204,10 @@ pub(crate) fn is_identity(perm: &[usize]) -> bool {
     perm.iter().enumerate().all(|(i, &p)| i == p)
 }
 
-pub(crate) fn permute_if_needed<B: Backend, const D: usize>(
-    t: Tensor<B, D>,
+pub(crate) fn permute_if_needed<const D: usize>(
+    t: Tensor<D>,
     perm: &[usize],
-) -> Tensor<B, D> {
+) -> Tensor<D> {
     if is_identity(perm) {
         return t;
     }
@@ -215,16 +215,16 @@ pub(crate) fn permute_if_needed<B: Backend, const D: usize>(
     t.permute(arr)
 }
 
-pub(crate) fn align_to_impl<B: Backend, const D_IN: usize, const D_OUT: usize>(
-    t: Tensor<B, D_IN>,
+pub(crate) fn align_to_impl<const D_IN: usize, const D_OUT: usize>(
+    t: Tensor<D_IN>,
     operand_names: &[&'static str],
     target_names: &[&'static str],
-) -> Tensor<B, D_OUT> {
+) -> Tensor<D_OUT> {
     let missing: Vec<isize> = (0..D_OUT as isize)
         .filter(|&i| !operand_names.contains(&target_names[i as usize]))
         .collect();
 
-    let expanded: Tensor<B, D_OUT> = t.unsqueeze_dims(&missing);
+    let expanded: Tensor<D_OUT> = t.unsqueeze_dims(&missing);
 
     let mut src = operand_names.iter().copied();
     let current: Vec<&'static str> = (0..D_OUT)

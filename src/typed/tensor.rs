@@ -6,14 +6,14 @@ use std::ops::{Add, Div, Mul, Sub};
 use super::dims::*;
 use super::ops::NamedOut;
 
-pub struct NamedTensor<B: Backend, S, const D: usize> {
-    pub inner: Tensor<B, D>,
+pub struct NamedTensor<S, const D: usize> {
+    pub inner: Tensor<D>,
     pub names: Vec<&'static str>,
     _s: PhantomData<fn() -> S>,
 }
 
-impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
-    pub fn new(t: Tensor<B, D>) -> Self {
+impl<S: NameList + Rank, const D: usize> NamedTensor<S, D> {
+    pub fn new(t: Tensor<D>) -> Self {
         debug_assert_eq!(D, S::RANK);
         Self {
             inner: t,
@@ -24,7 +24,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
 
     /// Build from raw data, mirroring [`Tensor::from_data`]. Dim names come
     /// from the type `S`.
-    pub fn from_data<T: Into<TensorData>>(data: T, device: &B::Device) -> Self {
+    pub fn from_data<T: Into<TensorData>>(data: T, device: &Device) -> Self {
         Self::new(Tensor::from_data(data, device))
     }
 
@@ -32,12 +32,12 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     pub fn from_floats<E: Element>(
         data: Vec<E>,
         shape: impl Into<Shape>,
-        device: &B::Device,
+        device: &Device,
     ) -> Self {
         Self::new(Tensor::from_data(TensorData::new(data, shape), device))
     }
 
-    pub fn into_inner(self) -> Tensor<B, D> {
+    pub fn into_inner(self) -> Tensor<D> {
         self.inner
     }
     pub fn shape(&self) -> burn::tensor::Shape {
@@ -51,17 +51,17 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     }
 
     /// Mean-reduce over named dims `Ks`.
-    pub fn mean<Ks, Out, Idx, const D_OUT: usize>(self) -> <Out as NamedOut<B, D_OUT>>::Out
+    pub fn mean<Ks, Out, Idx, const D_OUT: usize>(self) -> <Out as NamedOut<D_OUT>>::Out
     where
         Ks: NameList,
         S: RemoveAll<Ks, Idx, Output = Out>,
-        Out: NamedOut<B, D_OUT>,
+        Out: NamedOut<D_OUT>,
     {
-        super::ops::mean::<B, Ks, Out, S, Idx, D, D_OUT>(self)
+        super::ops::mean::<Ks, Out, S, Idx, D, D_OUT>(self)
     }
 
     /// Drop to an untyped [`crate::untyped::NamedTensor`] for runtime-checked operations.
-    pub fn untyped(self) -> crate::untyped::NamedTensor<B, D> {
+    pub fn untyped(self) -> crate::untyped::NamedTensor<D> {
         let names: [String; D] = std::array::from_fn(|i| self.names[i].to_string());
         crate::untyped::NamedTensor::from_parts(names, self.inner)
     }
@@ -108,7 +108,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     pub fn slice_fill<Spec, Idx, E>(self, spec: Spec, value: E) -> Self
     where
         Spec: crate::slice::SliceSpec<S, Idx>,
-        E: burn::tensor::ElementConversion,
+        E: burn::tensor::Element,
     {
         let mut slices = vec![Slice::full(); D];
         spec.write(&self.names, &mut slices);
@@ -122,7 +122,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
         self,
         _dim: Dm,
         index: isize,
-    ) -> NamedTensor<B, Out, D_OUT>
+    ) -> NamedTensor<Out, D_OUT>
     where
         Dm: DimName,
         S: Contains<Dm, I> + Remove<Dm, I, Output = Out>,
@@ -134,7 +134,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
 
     /// Removes dim `Dm` from the tensor. Panics if its size is not 1; use
     /// [`isel_by`](Self::isel_by) to pick an index along a larger dim.
-    pub fn squeeze_dim<Dm, I, Out, const D_OUT: usize>(self, _dim: Dm) -> NamedTensor<B, Out, D_OUT>
+    pub fn squeeze_dim<Dm, I, Out, const D_OUT: usize>(self, _dim: Dm) -> NamedTensor<Out, D_OUT>
     where
         Dm: DimName,
         S: Contains<Dm, I> + Remove<Dm, I, Output = Out>,
@@ -150,7 +150,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     /// Unlike burn's `squeeze`, the dims to drop are named explicitly rather
     /// than inferred from runtime sizes: which dims disappear must be known
     /// at compile time, since they are removed from the type.
-    pub fn squeeze<Ks, Out, Idx, const D_OUT: usize>(self) -> NamedTensor<B, Out, D_OUT>
+    pub fn squeeze<Ks, Out, Idx, const D_OUT: usize>(self) -> NamedTensor<Out, D_OUT>
     where
         Ks: NameList,
         S: RemoveAll<Ks, Idx, Output = Out>,
@@ -168,14 +168,14 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     /// appear in `Out` (checked at compile time); `Out` may contain extra dims.
     ///
     /// ```ignore
-    /// let y: NamedTensor<B, dims![N, H, M], 3> = x.align_to();
+    /// let y: NamedTensor<dims![N, H, M], 3> = x.align_to();
     /// ```
-    pub fn align_to<Out, Idx, const D_OUT: usize>(self) -> NamedTensor<B, Out, D_OUT>
+    pub fn align_to<Out, Idx, const D_OUT: usize>(self) -> NamedTensor<Out, D_OUT>
     where
         S: Subset<Out, Idx> + NameList + Rank,
         Out: NameList + Rank,
     {
-        super::ops::align_to::<B, Out, S, Idx, D, D_OUT>(self)
+        super::ops::align_to::<Out, S, Idx, D, D_OUT>(self)
     }
 
     /// Align to the dim list of `other`, permuting axes and adding size-1 dims
@@ -183,13 +183,13 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     /// for its type.
     pub fn align_as<SR, Idx, const DR: usize>(
         self,
-        other: &NamedTensor<B, SR, DR>,
-    ) -> NamedTensor<B, SR, DR>
+        other: &NamedTensor<SR, DR>,
+    ) -> NamedTensor<SR, DR>
     where
         S: Subset<SR, Idx> + NameList + Rank,
         SR: NameList + Rank,
     {
-        super::ops::align_as::<B, S, SR, Idx, D, DR>(self, other)
+        super::ops::align_as::<S, SR, Idx, D, DR>(self, other)
     }
 
     // ── Unary ops ──
@@ -338,8 +338,8 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     /// cumsum is linear), mirroring xarray's `cumsum(dim=[...])`.
     ///
     /// ```ignore
-    /// let a: NamedTensor<B, dims![N], 1>    = t.cumsum::<dims![N], _>();
-    /// let b: NamedTensor<B, dims![M, N], 2> = t.cumsum::<dims![M, N], _>();
+    /// let a: NamedTensor<dims![N], 1>    = t.cumsum::<dims![N], _>();
+    /// let b: NamedTensor<dims![M, N], 2> = t.cumsum::<dims![M, N], _>();
     /// ```
     pub fn cumsum<Ks, Idx>(self) -> Self
     where
@@ -355,6 +355,7 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
 
     /// Private single-dim variant of [`cumsum`], kept for call sites that
     /// hold a concrete dim marker `Dm` rather than a dim list.
+    #[allow(dead_code)]
     fn cumsum_dim<Dm, I>(self, _dim: Dm) -> Self
     where
         Dm: DimName,
@@ -365,9 +366,9 @@ impl<B: Backend, S: NameList + Rank, const D: usize> NamedTensor<B, S, D> {
     }
 }
 
-impl<B: Backend, S, const D: usize> Clone for NamedTensor<B, S, D>
+impl<S, const D: usize> Clone for NamedTensor<S, D>
 where
-    Tensor<B, D>: Clone,
+    Tensor<D>: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -377,17 +378,17 @@ where
         }
     }
 }
-impl<B: Backend, S, const D: usize> std::fmt::Debug for NamedTensor<B, S, D>
+impl<S, const D: usize> std::fmt::Debug for NamedTensor<S, D>
 where
-    Tensor<B, D>: std::fmt::Debug,
+    Tensor<D>: std::fmt::Debug,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
     }
 }
-impl<B: Backend, S, const D: usize> std::fmt::Display for NamedTensor<B, S, D>
+impl<S, const D: usize> std::fmt::Display for NamedTensor<S, D>
 where
-    Tensor<B, D>: std::fmt::Display,
+    Tensor<D>: std::fmt::Display,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.inner.fmt(f)
@@ -399,16 +400,15 @@ where
 // use the free functions `add`, `sub`, `mul`, `div` with an explicit output type.
 macro_rules! impl_op {
     ($trait:ident, $method:ident, $op:tt) => {
-        impl<B, SL, SR, const DL: usize, const DR: usize> $trait<NamedTensor<B, SR, DR>>
-            for NamedTensor<B, SL, DL>
+        impl<SL, SR, const DL: usize, const DR: usize> $trait<NamedTensor<SR, DR>>
+            for NamedTensor<SL, DL>
         where
-            B: Backend,
             SL: NameList + Rank,
             SR: NameList + Rank,
         {
-            type Output = NamedTensor<B, SL, DL>;
+            type Output = NamedTensor<SL, DL>;
 
-            fn $method(self, rhs: NamedTensor<B, SR, DR>) -> Self::Output {
+            fn $method(self, rhs: NamedTensor<SR, DR>) -> Self::Output {
                 let r = align_to_impl(rhs.inner, &rhs.names, &self.names);
                 NamedTensor::new(self.inner $op r)
             }

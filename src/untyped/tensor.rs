@@ -4,24 +4,24 @@ use std::ops::{Add, Div, Mul, Sub};
 
 use super::ops::{align, axis_of, perm_of, permute_by, to_array};
 
-pub struct NamedTensor<B: Backend, const D: usize> {
-    pub inner: Tensor<B, D>,
+pub struct NamedTensor<const D: usize> {
+    pub inner: Tensor<D>,
     pub names: [String; D],
 }
 
-impl<B: Backend, const D: usize> NamedTensor<B, D> {
-    pub fn new(names: [&str; D], inner: Tensor<B, D>) -> Self {
+impl<const D: usize> NamedTensor<D> {
+    pub fn new(names: [&str; D], inner: Tensor<D>) -> Self {
         Self {
             inner,
             names: names.map(String::from),
         }
     }
-    pub fn from_parts(names: [String; D], inner: Tensor<B, D>) -> Self {
+    pub fn from_parts(names: [String; D], inner: Tensor<D>) -> Self {
         Self { inner, names }
     }
 
     /// Build from raw data, mirroring [`Tensor::from_data`].
-    pub fn from_data<T: Into<TensorData>>(names: [&str; D], data: T, device: &B::Device) -> Self {
+    pub fn from_data<T: Into<TensorData>>(names: [&str; D], data: T, device: &Device) -> Self {
         Self::new(names, Tensor::from_data(data, device))
     }
 
@@ -30,12 +30,12 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
         names: [&str; D],
         data: Vec<E>,
         shape: impl Into<Shape>,
-        device: &B::Device,
+        device: &Device,
     ) -> Self {
         Self::new(names, Tensor::from_data(TensorData::new(data, shape), device))
     }
 
-    pub fn into_inner(self) -> Tensor<B, D> {
+    pub fn into_inner(self) -> Tensor<D> {
         self.inner
     }
     pub fn shape(&self) -> Shape {
@@ -49,7 +49,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn mean<C: super::ops::IntoContract, const D_OUT: usize>(
         self,
         dims: C,
-    ) -> NamedTensor<B, D_OUT> {
+    ) -> NamedTensor<D_OUT> {
         let contract = dims.into_contract();
         assert_eq!(
             D_OUT + contract.len(),
@@ -78,8 +78,8 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
             .collect();
         let out_shape: [usize; D_OUT] = std::array::from_fn(|i| kept[i]);
         let prod: usize = out_shape.iter().product::<usize>().max(1);
-        let flat: Tensor<B, 1> = inner.reshape([prod]);
-        let result: Tensor<B, D_OUT> = flat.reshape(out_shape);
+        let flat: Tensor<1> = inner.reshape([prod]);
+        let result: Tensor<D_OUT> = flat.reshape(out_shape);
         NamedTensor::from_parts(to_array(out_names), result)
     }
 
@@ -107,7 +107,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn slice_assign<Spec: crate::slice::UntypedSliceSpec>(
         self,
         spec: Spec,
-        values: NamedTensor<B, D>,
+        values: NamedTensor<D>,
     ) -> Self {
         let mut slices = vec![Slice::full(); D];
         spec.write(&self.names, &mut slices);
@@ -120,7 +120,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     pub fn slice_fill<Spec, E>(self, spec: Spec, value: E) -> Self
     where
         Spec: crate::slice::UntypedSliceSpec,
-        E: burn::tensor::ElementConversion,
+        E: burn::tensor::Element,
     {
         let mut slices = vec![Slice::full(); D];
         spec.write(&self.names, &mut slices);
@@ -130,7 +130,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     /// Selects a single index along `dim`, removing that dim from the result
     /// (xarray's `isel` semantics for integer indexers). Negative indices
     /// count from the end.
-    pub fn isel_by<const D_OUT: usize>(self, dim: &str, index: isize) -> NamedTensor<B, D_OUT> {
+    pub fn isel_by<const D_OUT: usize>(self, dim: &str, index: isize) -> NamedTensor<D_OUT> {
         assert_eq!(D_OUT + 1, D, "isel_by: D_OUT must equal D-1");
         let axis = axis_of(&self.names, dim);
         let mut names = self.names.to_vec();
@@ -144,7 +144,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     /// Removes `dim` from the tensor. Panics if it is missing or its size is
     /// not 1; use [`isel_by`](Self::isel_by) to pick an index along a larger
     /// dim.
-    pub fn squeeze_dim<const D_OUT: usize>(self, dim: &str) -> NamedTensor<B, D_OUT> {
+    pub fn squeeze_dim<const D_OUT: usize>(self, dim: &str) -> NamedTensor<D_OUT> {
         assert_eq!(D_OUT + 1, D, "squeeze_dim: D_OUT must equal D-1");
         let axis = axis_of(&self.names, dim);
         let mut names = self.names.to_vec();
@@ -154,7 +154,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
 
     /// Removes every dim of size 1, like burn's `squeeze`. Panics if the
     /// number of remaining dims doesn't match `D_OUT`.
-    pub fn squeeze<const D_OUT: usize>(self) -> NamedTensor<B, D_OUT> {
+    pub fn squeeze<const D_OUT: usize>(self) -> NamedTensor<D_OUT> {
         let shape = self.inner.shape().to_vec();
         let names: Vec<String> = self
             .names
@@ -178,8 +178,8 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     /// appear in `target`; `target` may contain extra dims.
     ///
     /// Panics if a dim of `self` is missing from `target`.
-    pub fn align_to<const D_OUT: usize>(self, target: [&str; D_OUT]) -> NamedTensor<B, D_OUT> {
-        super::ops::align_to::<B, D, D_OUT>(self, target)
+    pub fn align_to<const D_OUT: usize>(self, target: [&str; D_OUT]) -> NamedTensor<D_OUT> {
+        super::ops::align_to::<D, D_OUT>(self, target)
     }
 
     /// Align to the dim list of `other`, permuting axes and adding size-1 dims
@@ -187,15 +187,15 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     /// for its names.
     ///
     /// Panics if a dim of `self` is missing from `other`.
-    pub fn align_as<const DR: usize>(self, other: &NamedTensor<B, DR>) -> NamedTensor<B, DR> {
-        super::ops::align_as::<B, D, DR>(self, other)
+    pub fn align_as<const DR: usize>(self, other: &NamedTensor<DR>) -> NamedTensor<DR> {
+        super::ops::align_as::<D, DR>(self, other)
     }
 
     /// Convert to a typed [`crate::typed::NamedTensor`], permuting axes to match
     /// the target dim order. Panics if the name sets don't match.
     pub fn to_named<S: crate::typed::NameList + crate::typed::Rank>(
         self,
-    ) -> crate::typed::NamedTensor<B, S, D> {
+    ) -> crate::typed::NamedTensor<S, D> {
         let target = S::names();
         let from: Vec<String> = self.names.to_vec();
         let to: Vec<String> = target.iter().map(|s| s.to_string()).collect();
@@ -348,7 +348,7 @@ impl<B: Backend, const D: usize> NamedTensor<B, D> {
     }
 }
 
-impl<B: Backend, const D: usize> Clone for NamedTensor<B, D> {
+impl<const D: usize> Clone for NamedTensor<D> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -356,7 +356,7 @@ impl<B: Backend, const D: usize> Clone for NamedTensor<B, D> {
         }
     }
 }
-impl<B: Backend, const D: usize> std::fmt::Debug for NamedTensor<B, D> {
+impl<const D: usize> std::fmt::Debug for NamedTensor<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("NamedTensor")
             .field("names", &self.names)
@@ -364,7 +364,7 @@ impl<B: Backend, const D: usize> std::fmt::Debug for NamedTensor<B, D> {
             .finish()
     }
 }
-impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
+impl<const D: usize> std::fmt::Display for NamedTensor<D> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?} {}", self.names, self.inner)
     }
@@ -375,13 +375,13 @@ impl<B: Backend, const D: usize> std::fmt::Display for NamedTensor<B, D> {
 // use the free functions `add`, `sub`, `mul`, `div` with an explicit output type.
 macro_rules! impl_op {
     ($trait:ident, $method:ident, $op:tt) => {
-        impl<B: Backend, const DL: usize, const DR: usize> $trait<NamedTensor<B, DR>>
-            for NamedTensor<B, DL>
+        impl<const DL: usize, const DR: usize> $trait<NamedTensor<DR>>
+            for NamedTensor<DL>
         {
-            type Output = NamedTensor<B, DL>;
+            type Output = NamedTensor<DL>;
 
-            fn $method(self, rhs: NamedTensor<B, DR>) -> Self::Output {
-                let r = align::<B, DR, DL>(rhs.inner, &rhs.names, &self.names);
+            fn $method(self, rhs: NamedTensor<DR>) -> Self::Output {
+                let r = align::<DR, DL>(rhs.inner, &rhs.names, &self.names);
                 NamedTensor::from_parts(self.names, self.inner $op r)
             }
         }

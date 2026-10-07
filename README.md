@@ -6,7 +6,7 @@ The idea of named tensor axes was popularized by [Sasha Rush's "Tensor Considere
 
 ## Core idea
 
-Instead of tracking tensor axes by position (`Tensor<B, 3>` with axis 0 = batch, axis 1 = sequence, etc.), each axis gets a named marker type. The compiler rejects programs that misuse dimensions — no runtime errors, no transposition bugs.
+Instead of tracking tensor axes by position (`Tensor<3>` with axis 0 = batch, axis 1 = sequence, etc.), each axis gets a named marker type. The compiler rejects programs that misuse dimensions — no runtime errors, no transposition bugs.
 
 ```rust
 use named_tensor::{dim, dims};
@@ -15,7 +15,7 @@ use named_tensor::typed::NamedTensor;
 dim!(Batch, SeqLen, Hidden);
 
 // The type *is* the documentation:
-let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(raw_tensor);
+let x: NamedTensor<dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(raw_tensor);
 ```
 
 ## Quick start
@@ -25,37 +25,34 @@ let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> = NamedTensor::new(raw_te
 Dimension names are zero-sized marker types. The compiler rejects mismatched dims before your code ever runs:
 
 ```rust
-use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::typed::{matmul, NamedTensor};
 use named_tensor::{dim, dims, s};
-
-type B = Flex<f32>;
 
 dim!(Batch, SeqLen, Hidden, Vocab);
 
 let dev = Default::default();
 
 // Create named tensors — the type *is* the documentation
-let x: NamedTensor<B, dims![Batch, SeqLen, Hidden], 3> =
+let x: NamedTensor<dims![Batch, SeqLen, Hidden], 3> =
     NamedTensor::new(Tensor::ones(Shape::new([2, 10, 64]), &dev));
-let w: NamedTensor<B, dims![Hidden, Vocab], 2> =
+let w: NamedTensor<dims![Hidden, Vocab], 2> =
     NamedTensor::new(Tensor::ones(Shape::new([64, 1000]), &dev));
 
 // matmul contracts over `Hidden` (shared, not in output) — result is dims![Batch, SeqLen, Vocab]
-let logits: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
+let logits: NamedTensor<dims![Batch, SeqLen, Vocab], 3> =
     matmul(x, w);
 
 // Element-wise ops check that dims match at compile time
-let bias: NamedTensor<B, dims![Vocab], 1> =
+let bias: NamedTensor<dims![Vocab], 1> =
     NamedTensor::new(Tensor::zeros(Shape::new([1000]), &dev));
-let out: NamedTensor<B, dims![Batch, SeqLen, Vocab], 3> =
+let out: NamedTensor<dims![Batch, SeqLen, Vocab], 3> =
     logits + bias;
 
 // Index by name: slice keeps the dims, squeeze drops a size-1 dim
 let recent = out.clone().slice(s![SeqLen => 5..10]);          // same type, SeqLen now 5
 let head = out.clone().slice_by(SeqLen, 0..4);                // single-dim shorthand
-let first: NamedTensor<B, dims![SeqLen, Vocab], 2> =
+let first: NamedTensor<dims![SeqLen, Vocab], 2> =
     out.clone().slice_by(Batch, 0..1).squeeze_dim(Batch);     // Batch gone from the type
 
 // Write to named regions: fill with a scalar, or assign another tensor
@@ -68,34 +65,31 @@ let patched = masked.slice_assign(s![SeqLen => 5..10], recent);
 The same operations with `&str` dim names, checked at runtime. Useful when dim names are only known at runtime, or as a gentler on-ramp:
 
 ```rust
-use burn::backend::Flex;
 use burn::tensor::{Shape, Tensor};
 use named_tensor::{matmul, s, NamedTensor};
 
-type B = Flex<f32>;
-
 let dev = Default::default();
 
-let x = NamedTensor::<B, 3>::new(
+let x = NamedTensor::<3>::new(
     ["Batch", "SeqLen", "Hidden"],
     Tensor::ones(Shape::new([2, 10, 64]), &dev),
 );
-let w = NamedTensor::<B, 2>::new(
+let w = NamedTensor::<2>::new(
     ["Hidden", "Vocab"],
     Tensor::ones(Shape::new([64, 1000]), &dev),
 );
 
-let logits: NamedTensor<B, 3> = matmul(x, w, "Hidden");
-let bias = NamedTensor::<B, 1>::new(
+let logits: NamedTensor<3> = matmul(x, w, "Hidden");
+let bias = NamedTensor::<1>::new(
     ["Vocab"],
     Tensor::zeros(Shape::new([1000]), &dev),
 );
-let out: NamedTensor<B, 3> = logits + bias;
+let out: NamedTensor<3> = logits + bias;
 
 // Index by name at runtime: slice keeps the dims, squeeze drops a size-1 dim
 let recent = out.clone().slice(s!["SeqLen" => 5..10]);
 let head = out.clone().slice_by("SeqLen", 0..4);
-let first: NamedTensor<B, 2> = out.clone().slice_by("Batch", 0..1).squeeze();
+let first: NamedTensor<2> = out.clone().slice_by("Batch", 0..1).squeeze();
 
 // Write to named regions; slice_assign aligns `values` axes by dim name
 let masked = out.slice_fill(s!["SeqLen" => 5..10], 0.0);
@@ -111,15 +105,15 @@ be supplied explicitly at runtime.
 
 | Capability | Typed (`named_tensor::typed`) | Untyped (`named_tensor`) |
 |---|---|---|
-| **Struct** | `NamedTensor<B, S, D>` — dim list `S` is in the type | `NamedTensor<B, D>` — dims stored as strings at runtime |
+| **Struct** | `NamedTensor<S, D>` — dim list `S` is in the type | `NamedTensor<D>` — dims stored as strings at runtime |
 | **Import** | `use named_tensor::typed::*;` | Re-exported at crate root (`use named_tensor::*;`) |
 | **`matmul`** | Contracted dims inferred from the return-type annotation | Contracted dim(s) passed explicitly: `matmul(x, w, "Hidden")` |
 | **`dot`** | Arbitrary-rank contraction; return type selects `f32` or `NamedTensor` | Rank-1 only; always returns `f32` |
-| **`sum`** | Reduced dim inferred from return type: `sum::<B, SeqLen, _, _, _, 2, 1>(t)` | Explicit string: `sum(t, "SeqLen")` |
+| **`sum`** | Reduced dim inferred from return type: `sum::<SeqLen, _, _, _, 2, 1>(t)` | Explicit string: `sum(t, "SeqLen")` |
 | **`mean`** | Reduced dims inferred from return type: `t.mean::<dims![SeqLen], _, _, 1>()` | Explicit argument to the method: `t.mean(["SeqLen"])` |
 | **`squeeze`** | Dims to drop named explicitly: `t.squeeze::<dims![Batch], _, _, 2>()`, or one at a time with `t.squeeze_dim(Batch)` | Drops all size-1 dims: `t.squeeze::<2>()`, or one by name: `t.squeeze_dim("Batch")` |
 | **`slice`** | Spec dims compile-checked: `t.slice(s![SeqLen => 5..10])` | String keys, runtime-checked: `t.slice(s!["SeqLen" => 5..10])` |
-| **`isel_by`** | Output dim list computed by `Remove`: `t.isel_by(SeqLen, -1)` | Output rank annotated: `let r: NamedTensor<B, 2> = t.isel_by("SeqLen", -1)` |
+| **`isel_by`** | Output dim list computed by `Remove`: `t.isel_by(SeqLen, -1)` | Output rank annotated: `let r: NamedTensor<2> = t.isel_by("SeqLen", -1)` |
 
 Operator traits (`+`, `-`, `*`, `/`) are available in both modules, but they
 use the **lhs type as the output type** and perform shape alignment at
@@ -218,8 +212,8 @@ pub trait ReplaceFirst<Old, New, Idx> { type Output; }
 Swaps one dim marker for another in the type-level list. The `rename` function uses this — it changes the type but emits zero machine code:
 
 ```rust
-let s: NamedTensor<B, dims![Features], 1> = sum(...);
-let h: NamedTensor<B, dims![Hidden], 1> = rename::<B, Features, Hidden, _, _, _, 1>(s);
+let s: NamedTensor<dims![Features], 1> = sum(...);
+let h: NamedTensor<dims![Hidden], 1> = rename::<Features, Hidden, _, _, _, 1>(s);
 // No runtime work — just a type change.
 ```
 
@@ -248,11 +242,11 @@ slice tensors with different dim orders. Dim-dropping operations
 ```rust
 dim!(M, N, P);
 
-let a: NamedTensor<B, dims![M, N], 2> = ...;
-let b: NamedTensor<B, dims![M, P], 2> = ...;
+let a: NamedTensor<dims![M, N], 2> = ...;
+let b: NamedTensor<dims![M, P], 2> = ...;
 
 // ERROR: P is not in dims![M, N], so IsUnionOf cannot be satisfied
-let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
+let c: NamedTensor<dims![M, N], 2> = add(a, b);
 ```
 
 ### Dot product on different dims
@@ -260,8 +254,8 @@ let c: NamedTensor<B, dims![M, N], 2> = add(a, b);
 ```rust
 dim!(Features, Time);
 
-let u: NamedTensor<B, dims![Features], 1> = ...;
-let v: NamedTensor<B, dims![Time], 1> = ...;
+let u: NamedTensor<dims![Features], 1> = ...;
+let v: NamedTensor<dims![Time], 1> = ...;
 
 // ERROR: with `Ret = f32` (Dims = DNil), neither `Features` nor `Time`
 // is shared with the other input or present in the output — `Exclusive` fails
@@ -271,16 +265,16 @@ let _: f32 = dot(u, v);
 ### Removing a dim that doesn't exist
 
 ```rust
-let t: NamedTensor<B, dims![M, N], 2> = ...;
+let t: NamedTensor<dims![M, N], 2> = ...;
 
 // ERROR: Contains<K, _> not satisfied for dims![M, N]
-let s = sum::<B, K, _, _, _, 2, 1>(t);
+let s = sum::<K, _, _, _, 2, 1>(t);
 ```
 
 ### Slicing by a dim the tensor doesn't have
 
 ```rust
-let t: NamedTensor<B, dims![M, N], 2> = ...;
+let t: NamedTensor<dims![M, N], 2> = ...;
 
 // ERROR: dim `K` is not present in this tensor's dimension list
 let s = t.slice(s![K => 0..1]);
@@ -293,10 +287,10 @@ silently target the wrong axis.
 ### Aligning to a target that drops a dim
 
 ```rust
-let t: NamedTensor<B, dims![M, N], 2> = ...;
+let t: NamedTensor<dims![M, N], 2> = ...;
 
 // ERROR: dims![M, N] is not a subset of dims![N, K] — `M` is missing
-let out: NamedTensor<B, dims![N, K], 2> = align_to(t);
+let out: NamedTensor<dims![N, K], 2> = align_to(t);
 ```
 
 `align_to` / `align_as` can only permute and add size-1 dims, never drop one;

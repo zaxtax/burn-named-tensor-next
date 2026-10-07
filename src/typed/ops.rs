@@ -3,62 +3,56 @@ use burn::prelude::*;
 use super::dims::*;
 use super::tensor::NamedTensor;
 
-/// `DNil` → `f32`, any non-empty dim list → `NamedTensor<B, Self, D>`.
-pub trait NamedOut<B: Backend, const D: usize>: Sized {
+/// `DNil` → `f32`, any non-empty dim list → `NamedTensor<Self, D>`.
+pub trait NamedOut<const D: usize>: Sized {
     type Out;
-    fn assemble(flat: Tensor<B, 1>, shape: [usize; D]) -> Self::Out;
+    fn assemble(flat: Tensor<1>, shape: [usize; D]) -> Self::Out;
 }
 
-impl<B: Backend> NamedOut<B, 0> for DNil
-where
-    B::FloatElem: Into<f32>,
-{
+impl NamedOut<0> for DNil {
     type Out = f32;
-    fn assemble(flat: Tensor<B, 1>, _: [usize; 0]) -> f32 {
-        flat.into_scalar().into()
+    fn assemble(flat: Tensor<1>, _: [usize; 0]) -> f32 {
+        flat.into_scalar::<f32>()
     }
 }
 
-impl<B: Backend, H: DimName, T, const D: usize> NamedOut<B, D> for DCons<H, T>
+impl<H: DimName, T, const D: usize> NamedOut<D> for DCons<H, T>
 where
     DCons<H, T>: NameList + Rank,
 {
-    type Out = NamedTensor<B, Self, D>;
-    fn assemble(flat: Tensor<B, 1>, shape: [usize; D]) -> Self::Out {
+    type Out = NamedTensor<Self, D>;
+    fn assemble(flat: Tensor<1>, shape: [usize; D]) -> Self::Out {
         NamedTensor::new(flat.reshape(shape))
     }
 }
 
-pub type Named<B, S, const D: usize> = <S as NamedOut<B, D>>::Out;
+pub type Named<S, const D: usize> = <S as NamedOut<D>>::Out;
 
 /// Inverse of [`NamedOut`]: given a concrete result type (`f32` or
-/// `NamedTensor<B, S, D>`), recovers the dimension list and knows how to
+/// `NamedTensor<S, D>`), recovers the dimension list and knows how to
 /// assemble the value from a flat tensor.
 ///
 /// This lets generic functions use the *return-type annotation* to drive
 /// trait-solver inference — the solver resolves `Ret` first (it's the
 /// return type), then reads `Ret::Dims` to feed into downstream bounds
 /// like [`Exclusive`].
-pub trait IntoNamedResult<B: Backend>: Sized {
+pub trait IntoNamedResult: Sized {
     type Dims: NameList + Rank;
-    fn assemble(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self;
+    fn assemble(flat: Tensor<1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self;
 }
 
-impl<B: Backend> IntoNamedResult<B> for f32
-where
-    B::FloatElem: Into<f32>,
-{
+impl IntoNamedResult for f32 {
     type Dims = DNil;
-    fn assemble(flat: Tensor<B, 1>, _raw_shape: &[usize], _raw_names: &[&'static str]) -> f32 {
-        flat.into_scalar().into()
+    fn assemble(flat: Tensor<1>, _raw_shape: &[usize], _raw_names: &[&'static str]) -> f32 {
+        flat.into_scalar::<f32>()
     }
 }
 
-impl<B: Backend, S: NameList + Rank, const D: usize> IntoNamedResult<B> for NamedTensor<B, S, D> {
+impl<S: NameList + Rank, const D: usize> IntoNamedResult for NamedTensor<S, D> {
     type Dims = S;
-    fn assemble(flat: Tensor<B, 1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self {
+    fn assemble(flat: Tensor<1>, raw_shape: &[usize], raw_names: &[&'static str]) -> Self {
         let shape: [usize; D] = std::array::from_fn(|i| raw_shape[i]);
-        let tensor: Tensor<B, D> = flat.reshape(shape);
+        let tensor: Tensor<D> = flat.reshape(shape);
         let out_names = S::names();
         let perm = build_perm(raw_names, &out_names);
         NamedTensor::new(permute_if_needed(tensor, &perm))
@@ -68,12 +62,11 @@ impl<B: Backend, S: NameList + Rank, const D: usize> IntoNamedResult<B> for Name
 macro_rules! def_binop {
     ($name:ident, $verb:expr, $op:tt) => {
         #[doc = concat!("Element-wise ", $verb, " with union broadcasting. Inputs may differ in rank.")]
-        pub fn $name<B, Out, SL, SR, UIdx, const DL: usize, const DR: usize, const D_OUT: usize>(
-            lhs: NamedTensor<B, SL, DL>,
-            rhs: NamedTensor<B, SR, DR>,
-        ) -> NamedTensor<B, Out, D_OUT>
+        pub fn $name<Out, SL, SR, UIdx, const DL: usize, const DR: usize, const D_OUT: usize>(
+            lhs: NamedTensor<SL, DL>,
+            rhs: NamedTensor<SR, DR>,
+        ) -> NamedTensor<Out, D_OUT>
         where
-            B: Backend,
             Out: IsUnionOf<SL, SR, UIdx> + NameList + Rank,
             SL: NameList + Rank,
             SR: NameList + Rank,
@@ -95,7 +88,7 @@ def_binop!(div, "divide", /);
 ///
 /// Shared dims that **are** in the output become batch dims; shared dims
 /// that are **not** in the output are contracted. The return type drives
-/// inference — annotate as `NamedTensor<B, dims![…], D>` for a partial
+/// inference — annotate as `NamedTensor<dims![…], D>` for a partial
 /// contraction or `f32` for a full one.
 ///
 /// ```text
@@ -105,13 +98,12 @@ def_binop!(div, "divide", /);
 ///   → batch      = Batch (in both inputs and output)
 ///   → output     = dims![Batch, M, N]
 /// ```
-pub fn matmul<B, SL, SR, Ret, const DL: usize, const DR: usize>(
-    lhs: NamedTensor<B, SL, DL>,
-    rhs: NamedTensor<B, SR, DR>,
+pub fn matmul<SL, SR, Ret, const DL: usize, const DR: usize>(
+    lhs: NamedTensor<SL, DL>,
+    rhs: NamedTensor<SR, DR>,
 ) -> Ret
 where
-    B: Backend,
-    Ret: IntoNamedResult<B>,
+    Ret: IntoNamedResult,
     Ret::Dims: NameList + Rank,
     SL: NameList + Rank,
     SR: NameList + Rank,
@@ -197,9 +189,9 @@ where
         .product::<usize>()
         .max(1);
 
-    let lhs3: Tensor<B, 3> = lhs_p.reshape([batch_prod, m_prod, k_prod]);
-    let rhs3: Tensor<B, 3> = rhs_p.reshape([batch_prod, k_prod, n_prod]);
-    let raw3: Tensor<B, 3> = lhs3.matmul(rhs3);
+    let lhs3: Tensor<3> = lhs_p.reshape([batch_prod, m_prod, k_prod]);
+    let rhs3: Tensor<3> = rhs_p.reshape([batch_prod, k_prod, n_prod]);
+    let raw3: Tensor<3> = lhs3.matmul(rhs3);
 
     let raw_names: Vec<&'static str> = batch.iter().chain(&m).chain(&n).copied().collect();
     let raw_shape: Vec<usize> = batch_sizes
@@ -210,7 +202,7 @@ where
         .collect();
 
     let total: usize = raw_shape.iter().product::<usize>().max(1);
-    let flat: Tensor<B, 1> = raw3.reshape([total]);
+    let flat: Tensor<1> = raw3.reshape([total]);
 
     Ret::assemble(flat, &raw_shape, &raw_names)
 }
@@ -227,7 +219,7 @@ where
 /// survive. If a dim is in neither, it reports an unsatisfied bound.
 ///
 /// The return type drives inference: annotate as `f32` for a full contraction
-/// (all dims shared) or as `NamedTensor<B, dims![…], D>` for a partial one.
+/// (all dims shared) or as `NamedTensor<dims![…], D>` for a partial one.
 ///
 /// ```text
 /// lhs: dims![Batch, Features]
@@ -235,13 +227,12 @@ where
 ///   → shared = Features (contracted)
 ///   → output = dims![Batch, Classes]
 /// ```
-pub fn dot<B, SL, SR, Ret, LIdx, RIdx, const DL: usize, const DR: usize>(
-    lhs: NamedTensor<B, SL, DL>,
-    rhs: NamedTensor<B, SR, DR>,
+pub fn dot<SL, SR, Ret, LIdx, RIdx, const DL: usize, const DR: usize>(
+    lhs: NamedTensor<SL, DL>,
+    rhs: NamedTensor<SR, DR>,
 ) -> Ret
 where
-    B: Backend,
-    Ret: IntoNamedResult<B>,
+    Ret: IntoNamedResult,
     SL: NameList + Rank + Exclusive<SR, Ret::Dims, LIdx>,
     SR: NameList + Rank + Exclusive<SL, Ret::Dims, RIdx>,
 {
@@ -294,12 +285,12 @@ where
     let n_prod: usize = n_sizes.iter().product::<usize>().max(1);
 
     // Contract via batched matmul: [m_prod, shared_prod] × [shared_prod, n_prod]
-    let lhs2: Tensor<B, 2> = lhs_p.reshape([m_prod, shared_prod]);
-    let rhs2: Tensor<B, 2> = rhs_p.reshape([shared_prod, n_prod]);
-    let result2: Tensor<B, 2> = lhs2.matmul(rhs2);
+    let lhs2: Tensor<2> = lhs_p.reshape([m_prod, shared_prod]);
+    let rhs2: Tensor<2> = rhs_p.reshape([shared_prod, n_prod]);
+    let result2: Tensor<2> = lhs2.matmul(rhs2);
 
     let total = m_prod * n_prod;
-    let flat: Tensor<B, 1> = result2.reshape([total]);
+    let flat: Tensor<1> = result2.reshape([total]);
 
     let raw_shape: Vec<usize> = m_sizes.iter().chain(&n_sizes).copied().collect();
     let raw_names: Vec<&'static str> = m.iter().chain(&n).copied().collect();
@@ -307,15 +298,14 @@ where
     Ret::assemble(flat, &raw_shape, &raw_names)
 }
 
-fn reduce_impl<B, Ks, Out, S, Idx, const D: usize, const D_OUT: usize>(
-    t: NamedTensor<B, S, D>,
-    mut f: impl FnMut(Tensor<B, D>, usize) -> Tensor<B, D>,
-) -> <Out as NamedOut<B, D_OUT>>::Out
+fn reduce_impl<Ks, Out, S, Idx, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<S, D>,
+    mut f: impl FnMut(Tensor<D>, usize) -> Tensor<D>,
+) -> <Out as NamedOut<D_OUT>>::Out
 where
-    B: Backend,
     Ks: NameList,
     S: NameList + Rank + RemoveAll<Ks, Idx, Output = Out>,
-    Out: NamedOut<B, D_OUT>,
+    Out: NamedOut<D_OUT>,
 {
     let s_names = S::names();
     let k_names = Ks::names();
@@ -332,23 +322,22 @@ where
         .collect();
     let out_shape: [usize; D_OUT] = std::array::from_fn(|i| kept[i]);
     let prod: usize = out_shape.iter().product::<usize>().max(1);
-    let flat: Tensor<B, 1> = inner.reshape([prod]);
-    <Out as NamedOut<B, D_OUT>>::assemble(flat, out_shape)
+    let flat: Tensor<1> = inner.reshape([prod]);
+    <Out as NamedOut<D_OUT>>::assemble(flat, out_shape)
 }
 
 macro_rules! def_reduce {
     ($name:ident, $dim_op:ident) => {
         #[doc = concat!(stringify!($dim_op), "-reduce over named dims `Ks`.")]
-        pub fn $name<B, Ks, Out, S, Idx, const D: usize, const D_OUT: usize>(
-            t: NamedTensor<B, S, D>,
-        ) -> <Out as NamedOut<B, D_OUT>>::Out
+        pub fn $name<Ks, Out, S, Idx, const D: usize, const D_OUT: usize>(
+            t: NamedTensor<S, D>,
+        ) -> <Out as NamedOut<D_OUT>>::Out
         where
-            B: Backend,
             Ks: NameList,
             S: NameList + Rank + RemoveAll<Ks, Idx, Output = Out>,
-            Out: NamedOut<B, D_OUT>,
+            Out: NamedOut<D_OUT>,
         {
-            reduce_impl::<B, Ks, Out, S, Idx, D, D_OUT>(t, |inner, axis| inner.$dim_op(axis))
+            reduce_impl::<Ks, Out, S, Idx, D, D_OUT>(t, |inner, axis| inner.$dim_op(axis))
         }
     };
 }
@@ -359,12 +348,11 @@ def_reduce!(min, min_dim);
 def_reduce!(prod, prod_dim);
 def_reduce!(mean, mean_dim);
 
-/// Argmax over named dim `C`. Returns a plain `Tensor<B, D_OUT, Int>` of indices.
-pub fn argmax<B, C, S, Idx, const D: usize, const D_OUT: usize>(
-    t: NamedTensor<B, S, D>,
-) -> Tensor<B, D_OUT, burn::tensor::Int>
+/// Argmax over named dim `C`. Returns a plain `Tensor<D_OUT, Int>` of indices.
+pub fn argmax<C, S, Idx, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<S, D>,
+) -> Tensor<D_OUT, burn::tensor::Int>
 where
-    B: Backend,
     C: DimName,
     S: NameList + Rank + Contains<C, Idx>,
 {
@@ -373,11 +361,10 @@ where
 }
 
 /// Permute dims to a new order. `Out` must be a permutation of `S`.
-pub fn permute<B, Out, S, FIdx, BIdx, const D: usize>(
-    t: NamedTensor<B, S, D>,
-) -> NamedTensor<B, Out, D>
+pub fn permute<Out, S, FIdx, BIdx, const D: usize>(
+    t: NamedTensor<S, D>,
+) -> NamedTensor<Out, D>
 where
-    B: Backend,
     S: Subset<Out, FIdx> + NameList + Rank,
     Out: Subset<S, BIdx> + NameList + Rank,
 {
@@ -400,11 +387,10 @@ where
 /// t:    dims![M, N]      shape [3, 5]
 /// Out:  dims![N, H, M]   → shape [5, 1, 3]  (H added as size-1)
 /// ```
-pub fn align_to<B, Out, S, Idx, const D: usize, const D_OUT: usize>(
-    t: NamedTensor<B, S, D>,
-) -> NamedTensor<B, Out, D_OUT>
+pub fn align_to<Out, S, Idx, const D: usize, const D_OUT: usize>(
+    t: NamedTensor<S, D>,
+) -> NamedTensor<Out, D_OUT>
 where
-    B: Backend,
     S: Subset<Out, Idx> + NameList + Rank,
     Out: NameList + Rank,
 {
@@ -418,16 +404,15 @@ where
 /// `align_to::<SR>()` where `SR` is `other`'s dim list.
 ///
 /// `other` is borrowed only for its type; its data is not read.
-pub fn align_as<B, S, SR, Idx, const D: usize, const DR: usize>(
-    t: NamedTensor<B, S, D>,
-    _other: &NamedTensor<B, SR, DR>,
-) -> NamedTensor<B, SR, DR>
+pub fn align_as<S, SR, Idx, const D: usize, const DR: usize>(
+    t: NamedTensor<S, D>,
+    _other: &NamedTensor<SR, DR>,
+) -> NamedTensor<SR, DR>
 where
-    B: Backend,
     S: Subset<SR, Idx> + NameList + Rank,
     SR: NameList + Rank,
 {
-    align_to::<B, SR, S, Idx, D, DR>(t)
+    align_to::<SR, S, Idx, D, DR>(t)
 }
 
 /// Concatenate tensors along the existing dim `Dm`. All inputs share the
@@ -438,17 +423,16 @@ where
 ///
 /// Panics if `tensors` is empty, or if any non-concat dim has mismatched
 /// sizes across inputs.
-pub fn concat<B, S, Dm, I, const D: usize>(
-    tensors: Vec<NamedTensor<B, S, D>>,
+pub fn concat<S, Dm, I, const D: usize>(
+    tensors: Vec<NamedTensor<S, D>>,
     _dim: Dm,
-) -> NamedTensor<B, S, D>
+) -> NamedTensor<S, D>
 where
-    B: Backend,
     Dm: DimName,
     S: NameList + Rank + Contains<Dm, I>,
 {
     let axis = find_axis(&S::names(), Dm::NAME);
-    let inners: Vec<Tensor<B, D>> = tensors.into_iter().map(|t| t.inner).collect();
+    let inners: Vec<Tensor<D>> = tensors.into_iter().map(|t| t.inner).collect();
     NamedTensor::new(Tensor::cat(inners, axis))
 }
 
@@ -461,26 +445,24 @@ where
 /// dim elsewhere, `permute` the result.
 ///
 /// Panics if `tensors` is empty, or if the inputs' shapes differ.
-pub fn stack<B, S, New, const D: usize, const D_OUT: usize>(
-    tensors: Vec<NamedTensor<B, S, D>>,
+pub fn stack<S, New, const D: usize, const D_OUT: usize>(
+    tensors: Vec<NamedTensor<S, D>>,
     _dim: New,
-) -> NamedTensor<B, DCons<New, S>, D_OUT>
+) -> NamedTensor<DCons<New, S>, D_OUT>
 where
-    B: Backend,
     New: DimName,
     S: NameList + Rank,
 {
     debug_assert_eq!(D_OUT, D + 1, "stack: D_OUT must equal D + 1");
-    let inners: Vec<Tensor<B, D>> = tensors.into_iter().map(|t| t.inner).collect();
+    let inners: Vec<Tensor<D>> = tensors.into_iter().map(|t| t.inner).collect();
     NamedTensor::new(Tensor::stack::<D_OUT>(inners, 0))
 }
 
 /// Rename dim `Old` to `New` — zero cost.
-pub fn rename<B, Old, New, Out, S, Idx, const D: usize>(
-    t: NamedTensor<B, S, D>,
-) -> NamedTensor<B, Out, D>
+pub fn rename<Old, New, Out, S, Idx, const D: usize>(
+    t: NamedTensor<S, D>,
+) -> NamedTensor<Out, D>
 where
-    B: Backend,
     S: Contains<Old, Idx> + ReplaceFirst<Old, New, Idx, Output = Out>,
     Out: NameList + Rank,
 {
@@ -491,12 +473,12 @@ where
 /// type parameters are inferred from the input and return type.
 ///
 /// ```ignore
-/// let x: NamedTensor<B, dims![C], 1> = reduce!(sum, t, [H, W]);
-/// let x: NamedTensor<B, dims![B, C], 2> = reduce!(max, t, [H]);
+/// let x: NamedTensor<dims![C], 1> = reduce!(sum, t, [H, W]);
+/// let x: NamedTensor<dims![B, C], 2> = reduce!(max, t, [H]);
 /// ```
 #[macro_export]
 macro_rules! reduce {
     ($func:ident, $t:expr, [$($dim:ident),* $(,)?] $(,)?) => {
-        $crate::typed::ops::$func::<_, $crate::dims![$($dim),*], _, _, _, _, _>($t)
+        $crate::typed::ops::$func::<$crate::dims![$($dim),*], _, _, _, _, _>($t)
     };
 }
